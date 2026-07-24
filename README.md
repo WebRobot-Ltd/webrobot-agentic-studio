@@ -1,59 +1,83 @@
 # webrobot-agentic-studio
 
-The **WebRobot Agentic Studio** as a standalone Vue 3 component. Define, edit and run *agentic
-profiles* — the DAG of agents/crews that execute on Ray — against the WebRobot `/api/agentic`
-surface. Extracted from the WebRobot portal so the same studio can be embedded elsewhere.
+The **WebRobot Agent Studio** as a host-agnostic React component: a visual **DAG editor**
+(React Flow) for authoring the agent/crew graph that executes on Ray. Extracted from the
+WebRobot dashboard so the same studio can be embedded elsewhere (for example a WordPress
+plugin), the same way as [`webrobot-pipeline-studio`](https://github.com/WebRobot-Ltd/webrobot-pipeline-studio).
 
 ## What it does
 
-- List / create / edit / delete agentic profiles (the profile YAML is the DAG definition:
-  agents, crews, orchestration).
-- Start a run and monitor executions (status + logs).
-- Live YAML byte/line/warning feedback while editing a profile.
+Author an agent team as a graph — each agent is a node, edges are the orchestration flow —
+and produce the `agent_definition { crews, orchestration: { entry, edges, type } }` the backend
+consumes.
+
+- Node kinds: **RAG assistant**, **tool agent** (MCP), **HITL gate** (`ask_human`), **publisher**.
+- Approaches: `rag` (single), `sequential` (forward DAG), `loop` (feedback edge).
+- Build by hand, or **describe it in natural language** and have the backend model the graph
+  (`/api/agents/generate`), then review on the canvas.
+- Save a draft and submit for approval (agent-template routes).
 
 ## Install
 
 ```bash
-npm install webrobot-agentic-studio vue
+npm install webrobot-agentic-studio react @xyflow/react lucide-react
 ```
 
-`vue` (^3.3) is a peer dependency.
+`react`, `@xyflow/react` and `lucide-react` are peer dependencies.
+
+## Configure
+
+Host-agnostic: inject the API base and a token provider once. The core imports neither a token
+helper nor `process.env`.
+
+```ts
+import { configureAgentStudio } from 'webrobot-agentic-studio';
+
+configureAgentStudio({
+  apiBase: '',                                   // '' keeps same-origin BFF paths; a full origin points elsewhere
+  getToken: () => localStorage.getItem('jwt'),   // a function, so a rotated token is picked up
+});
+```
 
 ## Use
 
-```vue
-<script setup>
-import { AgenticStudio } from 'webrobot-agentic-studio';
-</script>
+```tsx
+import { AgentCanvas } from 'webrobot-agentic-studio';
 
-<template>
-  <AgenticStudio />
-</template>
+export function Studio() {
+  return <AgentCanvas />;
+}
 ```
 
-The component holds its own config — `apiBase`, `apiKey`, `orgId` — with a settings panel, and
-persists it to `localStorage` (`webrobot.agentic.studio.config`). Defaults target
-`https://api.webrobot.eu/api`. There is no build-time coupling: a host mounts the component and
-the user points it at an endpoint and supplies an API key.
+### Design-with-chat slot
+
+The canvas exposes an optional `chatSlot`. The package does **not** bundle a chat component —
+the host injects one, so the same "design with chat" panel serves both this studio and the
+pipeline studio:
+
+```tsx
+<AgentCanvas chatSlot={<DesignWithChat context="agentic:agent-studio" />} />
+```
 
 ## Endpoints
 
-Targets the `/api/agentic` surface:
+Prefixed with the configured `apiBase`:
 
-- `GET/POST /api/agentic/profiles`, `GET/PUT/DELETE /api/agentic/profiles/:id`
-- `POST /api/agentic/start`
-- `GET /api/agentic/executions`, and per-execution status/logs
+- `POST /api/agents/generate` — natural-language → `agent_definition`
+- `POST/PUT /api/admin/agent-templates(/:id)`, `POST /api/admin/agent-templates/:id/submit`
+- `GET/POST/PUT /api/admin/agentic/profiles(/:id)`
 
-Auth is sent as `Authorization: ApiKey <key>` and `X-API-Key: <key>`.
+Auth is sent as `Authorization: Bearer <token>`.
 
 ## Build
 
-`main` points at the `.vue` source, so a host with a Vue bundler can consume it directly. A
-compiled library build is also available:
-
 ```bash
-npm run build   # vite lib build → dist/
+npm run build      # tsc → dist/
+npm run typecheck
 ```
+
+The core (`configureAgentStudio` + the client) typechecks with no React present; the components
+need `@xyflow/react` + `lucide-react`.
 
 ## License
 
