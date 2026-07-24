@@ -1,0 +1,25 @@
+{
+  "name": "webrobot-agentic-studio",
+  "version": "0.1.0",
+  "description": "WebRobot Agentic Studio — a Vue component to define, edit and run the DAG of agents/crews that execute on Ray (/api/agentic).",
+  "license": "MIT",
+  "type": "module",
+  "main": "src/index.ts",
+  "module": "src/index.ts",
+  "files": ["src", "dist", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite"
+  },
+  "peerDependencies": {
+    "vue": "^3.3"
+  },
+  "devDependencies": {
+    "vue": "^3.4",
+    "vite": "^5",
+    "@vitejs/plugin-vue": "^5"
+  },
+  "keywords": ["webrobot", "agentic", "agents", "crewai", "ray", "dag", "orchestration", "vue"],
+  "repository": { "type": "git", "url": "git+https://github.com/WebRobot-Ltd/webrobot-agentic-studio.git" },
+  "sideEffects": ["*.vue", "*.css"]
+}
