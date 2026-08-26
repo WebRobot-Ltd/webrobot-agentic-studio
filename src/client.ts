@@ -79,3 +79,9 @@ export const saveAgenticProfile = (body: unknown, id?: string) =>
   id
     ? call<any>('PUT', `/api/admin/agentic/profiles/${encodeURIComponent(id)}`, body)
     : call<any>('POST', '/api/admin/agentic/profiles', body);
+
+// Publish a saved agentic profile to the marketplace (creates a pending_approval listing).
+// This is the canonical publish path used by the dashboard editor — NOT the legacy
+// agent-templates submit, which writes to a divergent store the runtime no longer reads.
+export const publishAgenticProfile = (body: unknown) =>
+  call<any>('POST', '/api/admin/agentic/marketplace', body);

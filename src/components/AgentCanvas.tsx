@@ -2,8 +2,9 @@
 
 // Agent Studio — Canvas (node-based). Author an agent team as a GRAPH: each agent is a node,
 // edges are the orchestration flow. Produces the agent_definition
-// { crews, orchestration:{entry,edges,type} } the backend consumes, saved via the agent-template
-// routes. Ported verbatim from the WebRobot dashboard; only the app couplings are removed:
+// { profile, crews, chat_mode, orchestration:{type,entry,nodes,edges} } the Ray runner consumes,
+// saved as a Jersey agentic_profile (spec = agent_definition) and published via the marketplace
+// route. Ported from the WebRobot dashboard; only the app couplings are removed:
 // API calls go through the injected client, and the JWT/paths come from configureAgentStudio().
 //
 //   kind 'rag'       → retrieval assistant (RAG knowledge index + answer)
@@ -21,7 +22,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import { Bot, Trash2, Save, Send, Brain, Wrench, UserCheck, Megaphone, Flag, Sparkles, Loader2 } from 'lucide-react';
 import {
-  generateAgents, createAgentTemplate, updateAgentTemplate, submitAgentTemplate, AgentStudioError,
+  generateAgents, saveAgenticProfile, publishAgenticProfile, AgentStudioError,
 } from '../client';
 
 type Kind = 'rag' | 'agent' | 'hitl' | 'publisher';
@@ -173,15 +174,33 @@ function Canvas({ chatSlot }: { chatSlot?: ReactNode }) {
     });
     const entry = (nodes.find((n) => n.data.entry) || nodes[0])?.id;
     const e = edges.map((x) => ({ from: x.source, to: x.target }));
-    return { crews, orchestration: { type: approach, entry, edges: e } };
-  }, [nodes, edges, approach]);
+    const team = nodes.length > 1;
+    const def: any = { profile: code || 'profile', crews };
+    if (team) {
+      def.chat_mode = 'team';
+      // `nodes` is what the Ray runner builds its topological order from. Emitting only
+      // {entry, edges} leaves it empty, and its emptiness check compares len(order) to
+      // len(nodes) — 0 to 0 — so a studio-authored team RUNS, reports SUCCEEDED and executes
+      // no agent at all. One node per crew, id == crew id, matching the edges' references.
+      def.orchestration = {
+        type: 'dag',
+        entry,
+        nodes: crews.map((c: any) => ({ id: c.id, crew: c.id })),
+        edges: e,
+      };
+    }
+    return def;
+  }, [nodes, edges, approach, code]);
 
   const isTeam = nodes.length > 1;
+  // Canonical persistence: author a Jersey agentic_profile (spec = agent_definition), publish via
+  // the marketplace route — the same unified store the dashboard editor and clone wizard use.
+  // (Not the legacy agent-templates routes, whose store the runtime no longer reads.)
   const body = () => ({
-    code, display_name: displayName, version, description, category,
-    tags: tags.split(',').map((t) => t.trim()).filter(Boolean),
-    is_team: isTeam, agent_definition: agentDef,
-    required_capabilities: ['webrobot_mcp'], price_unit: 'free',
+    name: (code || displayName || 'agent-profile').trim(),
+    version, description,
+    surface: 'both',
+    spec: JSON.stringify(agentDef),
   });
 
   const save = async () => {
@@ -189,9 +208,9 @@ function Canvas({ chatSlot }: { chatSlot?: ReactNode }) {
     if (!nodes.length) { setMsg({ k: 'err', t: 'Add at least one agent node.' }); return; }
     setBusy('save'); setMsg(null);
     try {
-      const j = savedId ? await updateAgentTemplate(savedId, body()) : await createAgentTemplate(body());
+      const j = await saveAgenticProfile(body(), savedId || undefined);
       const id = j?.id ?? j?.data?.id ?? savedId; setSavedId(id); setStatus('draft');
-      setMsg({ k: 'ok', t: `Draft saved (id ${id}).` }); return id;
+      setMsg({ k: 'ok', t: `Profile saved (id ${id}).` }); return id;
     } catch (e: any) { setMsg({ k: 'err', t: e instanceof AgentStudioError ? e.message : String(e) }); return null; }
     finally { setBusy(null); }
   };
@@ -199,8 +218,17 @@ function Canvas({ chatSlot }: { chatSlot?: ReactNode }) {
     const id = savedId || (await save()); if (!id) return;
     setBusy('submit');
     try {
-      await submitAgentTemplate(id);
-      setStatus('pending_approval'); setMsg({ k: 'ok', t: 'Submitted for approval.' });
+      await publishAgenticProfile({
+        profileId: id,
+        displayName: (displayName || code).trim(),
+        description, category,
+        tags: tags.split(',').map((t) => t.trim()).filter(Boolean),
+        priceUnit: 'free', priceAmount: 0,
+        locked: false, revenueSharePercent: 0,
+        requiredCapabilities: ['webrobot_mcp'],
+        ipDisclaimerAccepted: true,
+      });
+      setStatus('pending_approval'); setMsg({ k: 'ok', t: 'Published for approval.' });
     } catch (e: any) { setMsg({ k: 'err', t: e instanceof AgentStudioError ? e.message : String(e) }); }
     finally { setBusy(null); }
   };
