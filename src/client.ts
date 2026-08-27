@@ -85,3 +85,30 @@ export const saveAgenticProfile = (body: unknown, id?: string) =>
 // agent-templates submit, which writes to a divergent store the runtime no longer reads.
 export const publishAgenticProfile = (body: unknown) =>
   call<any>('POST', '/api/admin/agentic/marketplace', body);
+
+// ── Trading layer ───────────────────────────────────────────────────────────
+// These live under /api/trading (NOT the /api/admin/agentic base): a strategy is
+// an agent, and these routes bind it to a market and deploy it as a bot. The
+// guardrails (trading enabled, cap, allow-list) are enforced server-side.
+
+// Allow-list read from the tenant (organizations.trading_limits) so the user PICKS
+// instruments instead of guessing. organizationId is optional (super_admin acting
+// on behalf of a tenant; empty = the caller's own org).
+export const allowedAssets = (organizationId?: string) =>
+  call<any>(
+    'GET',
+    `/api/trading/allowed${organizationId ? `?organizationId=${encodeURIComponent(organizationId)}` : ''}`,
+  );
+
+// Register a strategy-agent in the strategy registry (kind: agentic) → strategyId.
+export const registerStrategy = (body: unknown) =>
+  call<any>('POST', '/api/trading/strategies', body);
+
+// Deploy (start) the bot for a registered strategy. organizationId is optional
+// (super_admin must operate on behalf of a tenant).
+export const deployBot = (body: unknown, organizationId?: string) =>
+  call<any>(
+    'POST',
+    `/api/trading/bots${organizationId ? `?organizationId=${encodeURIComponent(organizationId)}` : ''}`,
+    body,
+  );
