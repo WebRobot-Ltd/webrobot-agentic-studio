@@ -27,11 +27,22 @@ import {
 
 type Kind = 'rag' | 'agent' | 'hitl' | 'publisher';
 interface NodeData {
-  label: string; kind: Kind; model: string;
+  label: string; kind: Kind; engine: string; model: string;
   system_prompt: string; goal: string; mcp_url: string;
   rag: boolean; max_turns: number; entry: boolean;
+  // Runtime/safety fields — surfaced so SDK-authored crews aren't published without a
+  // budget cap / permission mode / tool restriction (the dashboard editor surfaces these).
+  permission_mode: string; disallowed_tools: string; max_budget_usd: string;
+  // The ORIGINAL crew object as loaded → re-emitted so fields the canvas doesn't surface
+  // (auth, goal_template, extra mcp_servers, variables, local_tools, …) survive a round-trip
+  // instead of being stripped. Edited fields override it on emit.
+  _raw?: any;
   [k: string]: unknown;
 }
+
+// Which runtime executes the crew. agent_sdk (Claude Agent SDK) | crewai | autogen (Ray).
+const ENGINES = ['agent_sdk', 'crewai', 'autogen'];
+const PERMISSION_MODES = ['', 'default', 'acceptEdits', 'bypassPermissions'];
 
 const KIND_META: Record<Kind, { name: string; icon: any; color: string; prompt: string }> = {
   rag:       { name: 'RAG assistant', icon: Brain,     color: '#2563eb', prompt: 'You answer from the knowledge base. Retrieve relevant context, then answer with citations.' },
@@ -101,9 +112,10 @@ function Canvas({ chatSlot }: { chatSlot?: ReactNode }) {
     const first = nodes.length === 0;
     setNodes((ns) => [...ns, {
       id, type: 'agent', position: { x: 60 + ns.length * 60, y: 80 + ns.length * 50 },
-      data: { label: id, kind, model: MODELS[0], system_prompt: KIND_META[kind].prompt,
+      data: { label: id, kind, engine: 'agent_sdk', model: MODELS[0], system_prompt: KIND_META[kind].prompt,
         goal: nodes.length ? '{' + (nodes[nodes.length - 1].id) + '}' : '', mcp_url: kind === 'agent' || kind === 'publisher' ? 'https://mcp.webrobot.eu/mcp' : '',
-        rag: kind === 'rag', max_turns: kind === 'hitl' ? 20 : 12, entry: first },
+        rag: kind === 'rag', max_turns: kind === 'hitl' ? 20 : 12, entry: first,
+        permission_mode: '', disallowed_tools: '', max_budget_usd: '' },
     }]);
     setSelId(id);
   };
@@ -123,10 +135,14 @@ function Canvas({ chatSlot }: { chatSlot?: ReactNode }) {
       return {
         id: c.id, type: 'agent', position: { x: 40 + i * 240, y: 120 + (i % 2) * 120 },
         data: {
-          label: c.id, kind, model: c.model || MODELS[0],
+          label: c.id, kind, engine: c.engine || 'agent_sdk', model: c.model || MODELS[0],
           system_prompt: c.system_prompt || KIND_META[kind].prompt, goal: c.goal || '',
           mcp_url: mcp?.url || '', rag: !!c.mcp_servers?.some((m: any) => m.name === 'rag'),
           max_turns: c.max_turns || 12, entry: c.id === (orch.entry || crews[0]?.id),
+          permission_mode: c.permission_mode || '',
+          disallowed_tools: Array.isArray(c.disallowed_tools) ? c.disallowed_tools.join(', ') : (c.disallowed_tools || ''),
+          max_budget_usd: c.max_budget_usd != null ? String(c.max_budget_usd) : '',
+          _raw: c,   // preserve every field for round-trip (auth, goal_template, extra mcp, variables, tools…)
         },
       };
     });
@@ -164,12 +180,29 @@ function Canvas({ chatSlot }: { chatSlot?: ReactNode }) {
   const agentDef = useMemo(() => {
     const crews = nodes.map((n) => {
       const d = n.data;
-      const crew: any = { id: n.id, kind: d.kind, model: d.model, system_prompt: d.system_prompt, max_turns: d.max_turns };
-      if (d.goal) crew.goal = d.goal;
+      // Start from the ORIGINAL crew so unsurfaced fields (auth, goal_template, variables,
+      // local_tools, …) survive; edited fields override it.
+      const crew: any = { ...(d._raw || {}) };
+      crew.id = n.id; crew.kind = d.kind; crew.engine = d.engine; crew.model = d.model;
+      crew.system_prompt = d.system_prompt; crew.max_turns = d.max_turns;
+      if (d.goal) crew.goal = d.goal; else delete crew.goal;
+      // MCP: the surfaced url edits the FIRST non-rag server; extra servers from the original
+      // are kept; the rag toggle (re)adds the rag server.
+      const rawMcp = Array.isArray(d._raw?.mcp_servers) ? d._raw.mcp_servers.filter((m: any) => m?.name !== 'rag') : [];
       const mcp: any[] = [];
-      if (d.mcp_url) mcp.push({ name: 'mcp', type: 'http', url: d.mcp_url, allow: 'all' });
+      if (d.mcp_url) {
+        mcp.push(rawMcp[0] ? { ...rawMcp[0], url: d.mcp_url } : { name: 'mcp', type: 'http', url: d.mcp_url, allow: 'all' });
+        for (let i = 1; i < rawMcp.length; i++) mcp.push(rawMcp[i]);
+      } else {
+        mcp.push(...rawMcp);
+      }
       if (d.rag) mcp.push({ name: 'rag', type: 'http', url: 'https://mcp-full.webrobot.eu/mcp', allow: ['ragQuery', 'ragStatus'] });
-      if (mcp.length) crew.mcp_servers = mcp;
+      if (mcp.length) crew.mcp_servers = mcp; else delete crew.mcp_servers;
+      // Runtime/safety fields (omit when blank).
+      if (d.permission_mode) crew.permission_mode = d.permission_mode; else delete crew.permission_mode;
+      const dt = (d.disallowed_tools || '').split(',').map((t) => t.trim()).filter(Boolean);
+      if (dt.length) crew.disallowed_tools = dt; else delete crew.disallowed_tools;
+      if (String(d.max_budget_usd ?? '').trim()) crew.max_budget_usd = Number(d.max_budget_usd); else delete crew.max_budget_usd;
       return crew;
     });
     const entry = (nodes.find((n) => n.data.entry) || nodes[0])?.id;
@@ -312,12 +345,21 @@ function Canvas({ chatSlot }: { chatSlot?: ReactNode }) {
                 </div>
               </div>
               <label className="block">id<input className={inp} value={sel.data.label} onChange={(e) => patch(sel.id, { label: e.target.value })} /></label>
+              <label className="block">engine<select className={inp} value={sel.data.engine} onChange={(e) => patch(sel.id, { engine: e.target.value })}>{ENGINES.map((en) => <option key={en}>{en}</option>)}</select></label>
               <label className="block">model<select className={inp} value={sel.data.model} onChange={(e) => patch(sel.id, { model: e.target.value })}>{MODELS.map((m) => <option key={m}>{m}</option>)}</select></label>
               <label className="block">system prompt<textarea className={inp + ' h-24'} value={sel.data.system_prompt} onChange={(e) => patch(sel.id, { system_prompt: e.target.value })} /></label>
               <label className="block">goal (use {'{parentId}'} to inject upstream output)<textarea className={inp + ' h-16'} value={sel.data.goal} onChange={(e) => patch(sel.id, { goal: e.target.value })} /></label>
               <label className="block">MCP url (tools)<input className={inp} value={sel.data.mcp_url} onChange={(e) => patch(sel.id, { mcp_url: e.target.value })} placeholder="https://mcp.webrobot.eu/mcp" /></label>
               <label className="flex items-center gap-2"><input type="checkbox" checked={sel.data.rag} onChange={(e) => patch(sel.id, { rag: e.target.checked })} /> RAG knowledge index</label>
               <label className="block">max turns<input type="number" className={inp} value={sel.data.max_turns} onChange={(e) => patch(sel.id, { max_turns: Number(e.target.value) })} /></label>
+              <details className="pt-1">
+                <summary className="cursor-pointer text-xs font-medium text-slate-500">runtime &amp; safety</summary>
+                <div className="mt-2 space-y-2">
+                  <label className="block">permission mode<select className={inp} value={sel.data.permission_mode} onChange={(e) => patch(sel.id, { permission_mode: e.target.value })}>{PERMISSION_MODES.map((p) => <option key={p} value={p}>{p || '(default)'}</option>)}</select></label>
+                  <label className="block">disallowed tools (comma-sep)<input className={inp} value={sel.data.disallowed_tools} onChange={(e) => patch(sel.id, { disallowed_tools: e.target.value })} placeholder="Bash, mcp__camoufox__agentic_browse" /></label>
+                  <label className="block">max budget (USD)<input type="number" className={inp} value={sel.data.max_budget_usd} onChange={(e) => patch(sel.id, { max_budget_usd: e.target.value })} placeholder="e.g. 5" /></label>
+                </div>
+              </details>
             </div>
           )}
         </div>
