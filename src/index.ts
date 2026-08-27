@@ -10,3 +10,4 @@
  */
 export * from './client';
 export { default as AgentCanvas } from './components/AgentCanvas';
+export { default as AgentStudio, type AgentStudioProps } from './components/AgentStudio';
