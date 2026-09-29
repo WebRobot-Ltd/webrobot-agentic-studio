@@ -24,6 +24,9 @@ export interface AgentStudioConfig {
    * il solo id. Stesso schema del pipeline studio (designerProfileUrl). Assente: il ramo e' disattivo.
    */
   agentDesignerProfileUrl?: string;
+  /** Catalogo degli MCP integrati (con credenziali per-org) offerti nel form. Specifico del cluster:
+   *  lo passa l'host. Assente: nessuna integrazione proposta. */
+  mcpIntegrations?: McpIntegration[];
 }
 
 let _config: AgentStudioConfig | null = null;
@@ -228,3 +231,42 @@ export function extractAgentDefinition(result: any): any | null {
     return def && typeof def === 'object' && Array.isArray(def.crews) ? def : null;
   } catch { return null; }
 }
+
+// ── MCP integrations (external MCPs with per-org credentials) ─────────────────
+//
+// Il `webrobot` full MCP usa il runner-JWT (nessuna credenziale utente). Gli MCP ESTERNI (es.
+// Postiz) vogliono una chiave: la si mette in `cloud_credentials` (per org, cifrata), e la spec del
+// profilo riferisce solo `${<PROVIDER>_API_KEY}` nell'header — il runner-token la risolve a run time
+// (McpIntegrationCredentialResolver). Il catalogo degli MCP integrati e' specifico del cluster
+// (URL, provider), quindi lo passa l'HOST via config, non e' cablato qui.
+export interface McpIntegration {
+  provider: string;      // deve stare in cloud_credentials.provider enum + MCP_INTEGRATION_PROVIDERS
+  label: string;         // nome mostrato
+  mcpUrl: string;        // url del server MCP a cui l'agente si connette
+  apiKeyEnv: string;     // nome env che il runner-token popola (es. POSTIZ_API_KEY) — usato nell'header
+  endpoint?: string;     // base url del servizio, salvato sulla cloud_credential
+  authScheme?: 'bearer' | 'x-api-key';   // come portare la chiave nell'header (default bearer)
+  note?: string;
+}
+
+export function getMcpIntegrations(): McpIntegration[] {
+  return config().mcpIntegrations || [];
+}
+
+/** L'header di auth per un'integrazione, che riferisce l'env (non il segreto). */
+export function mcpAuthHeader(integ: McpIntegration): Record<string, string> {
+  const ref = '${' + integ.apiKeyEnv + '}';
+  return integ.authScheme === 'x-api-key' ? { 'X-API-Key': ref } : { Authorization: `Bearer ${ref}` };
+}
+
+/**
+ * Salva/aggiorna la credenziale di un'integrazione MCP in cloud_credentials (per org, lato server).
+ * Il valore NON entra mai nella spec del profilo. Provider normalizzato a UPPER dal BFF.
+ */
+export const saveMcpCredential = (provider: string, apiKey: string, opts?: { endpoint?: string; name?: string }) =>
+  call<any>('POST', '/api/cloud-credentials', {
+    name: opts?.name || `${provider} (Agent Studio)`,
+    provider,
+    api_key: apiKey,
+    ...(opts?.endpoint ? { endpoint: opts.endpoint } : {}),
+  });

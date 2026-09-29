@@ -25,6 +25,7 @@ import {
   allowedAssets, registerStrategy, deployBot as deployBotCall,
   startAgentDesignerRun, getAgentRunStatus, getAgentRunResult,
   extractAgentDefinition, extractAgentNeeds, AgentStudioError,
+  getMcpIntegrations, mcpAuthHeader, saveMcpCredential, type McpIntegration,
 } from '../client';
 
 const CATEGORIES = [
@@ -206,6 +207,11 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
   const [askErr, setAskErr] = useState<string | null>(null);
   const [proposal, setProposal] = useState<any | null>(null);       // agent_definition proposto
   const runCtx = editId ? String(editId) : 'new';
+
+  // MCP integrati (con credenziali per-org). Catalogo dall'host; input chiave e stato per (crew,provider).
+  const mcpIntegrations = getMcpIntegrations();
+  const [intgKey, setIntgKey] = useState<Record<string, string>>({});
+  const [intgMsg, setIntgMsg] = useState<Record<string, string>>({});
 
   const isTeam = mode === 'team';   // explicit, not inferred from crew count
   const isPaid = priceUnit !== 'free' && Number(priceEur) > 0;
@@ -515,6 +521,36 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
 
   const setCrew = (i: number, patch: Partial<Crew>) =>
     setCrews((cs) => cs.map((c, j) => (j === i ? { ...c, ...patch } : c)));
+
+  // ── MCP integrati: aggancio/sgancio al crew + salvataggio chiave (per org) ──
+  // L'integrazione e' un mcp_servers aggiuntivo (in _raw, preservato dal builder oltre il primario):
+  // url dell'MCP + header che RIFERISCE l'env (${PROVIDER_API_KEY}), mai il segreto. Il segreto va in
+  // cloud_credentials (saveMcpCredential) e il runner-token lo risolve a run time.
+  const crewServers = (c: Crew): any[] => (Array.isArray((c as any)._raw?.mcp_servers) ? (c as any)._raw.mcp_servers : []);
+  const attachIntegration = (i: number, c: Crew, integ: McpIntegration) => {
+    const servers = [...crewServers(c)];
+    if (!servers.some((s) => s?.url === integ.mcpUrl)) {
+      servers.push({ name: integ.provider, type: 'http', url: integ.mcpUrl, allow: 'all', headers: mcpAuthHeader(integ) });
+    }
+    setCrew(i, { _raw: { ...((c as any)._raw || {}), mcp_servers: servers } } as Partial<Crew>);
+  };
+  const detachIntegration = (i: number, c: Crew, integ: McpIntegration) => {
+    const servers = crewServers(c).filter((s) => s?.url !== integ.mcpUrl);
+    setCrew(i, { _raw: { ...((c as any)._raw || {}), mcp_servers: servers } } as Partial<Crew>);
+  };
+  const saveIntegrationKey = async (i: number, integ: McpIntegration) => {
+    const k = `${i}:${integ.provider}`;
+    const key = (intgKey[k] || '').trim();
+    if (!key) return;
+    setIntgMsg((m) => ({ ...m, [k]: 'saving…' }));
+    try {
+      await saveMcpCredential(integ.provider, key, { endpoint: integ.endpoint });
+      setIntgMsg((m) => ({ ...m, [k]: 'saved ✓ — stored securely for your organization' }));
+      setIntgKey((m) => ({ ...m, [k]: '' }));
+    } catch (e) {
+      setIntgMsg((m) => ({ ...m, [k]: e instanceof AgentStudioError ? `save → ${e.status}` : 'save failed' }));
+    }
+  };
   const addCrew = () => setCrews((cs) => [...cs, { id: `agent${cs.length + 1}`, engine: 'agent_sdk', model: 'claude-sonnet-4-5', system_prompt: '', mcp_url: '', permission_mode: '', disallowed_tools: '', max_turns: '', max_budget_usd: '' }]);
   const removeCrew = (i: number) => setCrews((cs) => cs.filter((_, j) => j !== i));
 
@@ -676,6 +712,63 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
               </div>
               <textarea className={inp + ' h-16 mb-2'} value={c.system_prompt} onChange={(e) => setCrew(i, { system_prompt: e.target.value })} placeholder="system prompt (use {{variable}} to inject declared variables)" />
               <input className={inp + ' mb-2'} value={c.mcp_url} onChange={(e) => setCrew(i, { mcp_url: e.target.value })} placeholder="MCP url (optional, e.g. https://mcp.webrobot.eu/mcp)" />
+
+              {/* MCP integrati (con credenziali). Il webrobot full MCP sopra non chiede chiavi; questi
+                  SI (Postiz, ...). La chiave si salva in cloud_credentials (per org), l'header riferisce
+                  solo ${'${PROVIDER_API_KEY}'} — il segreto non entra mai nel profilo. */}
+              {mcpIntegrations.length > 0 && (() => {
+                const attached = mcpIntegrations.filter((ig) => crewServers(c).some((s) => s?.url === ig.mcpUrl));
+                const available = mcpIntegrations.filter((ig) => !attached.some((a) => a.provider === ig.provider));
+                return (
+                  <div className="mb-2 rounded-md border border-slate-200 bg-slate-50 p-2">
+                    <div className="mb-1 flex items-center gap-2">
+                      <span className="text-xs font-medium text-slate-600">Integration MCPs (with credentials)</span>
+                      {available.length > 0 && (
+                        <select
+                          className={inp + ' max-w-[220px] h-8 py-1'}
+                          value=""
+                          onChange={(e) => { const ig = mcpIntegrations.find((x) => x.provider === e.target.value); if (ig) attachIntegration(i, c, ig); }}
+                        >
+                          <option value="">+ add an integration…</option>
+                          {available.map((ig) => <option key={ig.provider} value={ig.provider}>{ig.label}</option>)}
+                        </select>
+                      )}
+                    </div>
+                    {attached.length === 0 && (
+                      <p className="text-[11px] leading-snug text-slate-400">
+                        External MCPs that need a key (e.g. Postiz). Add one, paste its API key, and Save —
+                        the key is stored securely for your organization, never in the profile.
+                      </p>
+                    )}
+                    {attached.map((ig) => {
+                      const k = `${i}:${ig.provider}`;
+                      return (
+                        <div key={ig.provider} className="mt-1 flex flex-wrap items-center gap-2 rounded border border-slate-200 bg-white p-2">
+                          <span className="text-xs font-medium text-slate-700">{ig.label}</span>
+                          <code className="rounded bg-slate-100 px-1 text-[10px] text-slate-500">${'{'}{ig.apiKeyEnv}{'}'}</code>
+                          <input
+                            type="password"
+                            className={inp + ' h-8 py-1 max-w-[220px]'}
+                            placeholder={`${ig.provider} API key`}
+                            value={intgKey[k] || ''}
+                            onChange={(e) => setIntgKey((m) => ({ ...m, [k]: e.target.value }))}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => saveIntegrationKey(i, ig)}
+                            disabled={!(intgKey[k] || '').trim()}
+                            className="rounded-md bg-slate-900 px-2.5 py-1 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+                          >
+                            Save key
+                          </button>
+                          <button type="button" onClick={() => detachIntegration(i, c, ig)} className="text-slate-400 hover:text-red-600" title="Remove this integration"><Trash2 className="h-4 w-4" /></button>
+                          {intgMsg[k] && <span className="text-[11px] text-slate-500">{intgMsg[k]}</span>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
               {/* Runtime & safety — now editable in the form (previously YAML-only and silently dropped on edit). */}
               <div className="grid sm:grid-cols-2 gap-2">
                 <L label="Permission mode" hint="How freely the agent acts (agent_sdk): default asks before sensitive actions; bypassPermissions runs unattended — use for background jobs."><select className={inp} value={c.permission_mode} onChange={(e) => setCrew(i, { permission_mode: e.target.value })}>{PERMISSION_MODES.map((p) => <option key={p} value={p}>{p || '(default)'}</option>)}</select></L>
