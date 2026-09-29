@@ -627,19 +627,19 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
       <section className="rounded-xl border border-slate-200 bg-white p-5 mb-5 shadow-sm">
         <h2 className="font-semibold mb-3">Info</h2>
         <div className="grid sm:grid-cols-2 gap-3">
-          <L label="Code (kebab-case)"><input className={inp} value={code} onChange={(e) => setCode(e.target.value)} placeholder="my-agent" /></L>
-          <L label="Display name"><input className={inp} value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="My Agent" /></L>
-          <L label="Version"><input className={inp} value={version} onChange={(e) => setVersion(e.target.value)} /></L>
-          <L label="Category"><select className={inp} value={category} onChange={(e) => setCategory(e.target.value)}>{CATEGORIES.map((c) => <option key={c} value={c}>{c.replace(/_/g, ' ')}</option>)}</select></L>
-          <L label="Surface"><select className={inp} value={surface} onChange={(e) => setSurface(e.target.value)} title="chat = persona selectable in the chat · background = CrewAI/Ray batch (schedule/trigger) · both">
+          <L label="Code (kebab-case)" hint="The profile's unique id, lowercase-with-dashes. Used internally, not shown to buyers."><input className={inp} value={code} onChange={(e) => setCode(e.target.value)} placeholder="my-agent" /></L>
+          <L label="Display name" hint="The name people see in the marketplace and the chat picker."><input className={inp} value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="My Agent" /></L>
+          <L label="Version" hint="Bump it when you change the profile (e.g. 1.0.0 → 1.1.0)."><input className={inp} value={version} onChange={(e) => setVersion(e.target.value)} /></L>
+          <L label="Category" hint="Where the agent is grouped in the marketplace."><select className={inp} value={category} onChange={(e) => setCategory(e.target.value)}>{CATEGORIES.map((c) => <option key={c} value={c}>{c.replace(/_/g, ' ')}</option>)}</select></L>
+          <L label="Surface" hint="Where the agent runs: a chat persona users pick, a background batch (scheduled/triggered), or both."><select className={inp} value={surface} onChange={(e) => setSurface(e.target.value)} title="chat = persona selectable in the chat · background = CrewAI/Ray batch (schedule/trigger) · both">
             <option value="background">⚙ background (batch)</option>
             <option value="chat">💬 chat (persona)</option>
             <option value="both">both</option>
           </select></L>
-          <L label="Tags (comma-sep)"><input className={inp} value={tags} onChange={(e) => setTags(e.target.value)} placeholder="etl, scraping" /></L>
-          <L label="Required capabilities (comma-sep)"><input className={inp} value={requiredCaps} onChange={(e) => setRequiredCaps(e.target.value)} placeholder="webrobot_mcp, postiz_mcp" /></L>
+          <L label="Tags (comma-sep)" hint="Keywords to find the agent in the marketplace. Comma-separated."><input className={inp} value={tags} onChange={(e) => setTags(e.target.value)} placeholder="etl, scraping" /></L>
+          <L label="Required capabilities (comma-sep)" hint="Platform features the agent needs to run — e.g. webrobot_mcp (the WebRobot tools), postiz_mcp (social publishing). A buyer whose plan lacks them can't install it. Leave empty if none. Comma-separated."><input className={inp} value={requiredCaps} onChange={(e) => setRequiredCaps(e.target.value)} placeholder="webrobot_mcp, postiz_mcp" /></L>
         </div>
-        <L label="Description" className="mt-3"><textarea className={inp + ' h-20'} value={description} onChange={(e) => setDescription(e.target.value)} /></L>
+        <L label="Description" className="mt-3" hint="One or two sentences on what this agent does — shown to buyers in the marketplace."><textarea className={inp + ' h-20'} value={description} onChange={(e) => setDescription(e.target.value)} /></L>
       </section>
 
       {/* Crews */}
@@ -663,8 +663,13 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
         <div className="space-y-4">
           {crews.map((c, i) => (
             <div key={i} className="rounded-lg border border-slate-200 p-3">
+              <p className="mb-2 text-[11px] leading-snug text-slate-400">
+                <b className="font-medium text-slate-500">id</b> = short name of this agent ·
+                <b className="font-medium text-slate-500"> engine</b> = runtime (agent_sdk is the default tool-using agent) ·
+                <b className="font-medium text-slate-500"> model</b> = the LLM. The system prompt below is the agent's instructions; the MCP url gives it a toolset.
+              </p>
               <div className="flex items-center gap-2 mb-2">
-                <input className={inp + ' max-w-[140px]'} value={c.id} onChange={(e) => setCrew(i, { id: e.target.value })} placeholder="id" />
+                <input className={inp + ' max-w-[140px]'} value={c.id} onChange={(e) => setCrew(i, { id: e.target.value })} placeholder="id" title="Short unique name for this agent (e.g. researcher)" />
                 <select className={inp + ' max-w-[130px]'} value={c.engine} onChange={(e) => setCrew(i, { engine: e.target.value })}>{ENGINES.map((en) => <option key={en} value={en}>{en}</option>)}</select>
                 <input className={inp} value={c.model} onChange={(e) => setCrew(i, { model: e.target.value })} placeholder="model" />
                 {crews.length > 1 && <button onClick={() => removeCrew(i)} className="text-slate-400 hover:text-red-600"><Trash2 className="h-4 w-4" /></button>}
@@ -673,10 +678,10 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
               <input className={inp + ' mb-2'} value={c.mcp_url} onChange={(e) => setCrew(i, { mcp_url: e.target.value })} placeholder="MCP url (optional, e.g. https://mcp.webrobot.eu/mcp)" />
               {/* Runtime & safety — now editable in the form (previously YAML-only and silently dropped on edit). */}
               <div className="grid sm:grid-cols-2 gap-2">
-                <L label="Permission mode"><select className={inp} value={c.permission_mode} onChange={(e) => setCrew(i, { permission_mode: e.target.value })}>{PERMISSION_MODES.map((p) => <option key={p} value={p}>{p || '(default)'}</option>)}</select></L>
-                <L label="Max turns"><input className={inp} type="number" min="1" value={c.max_turns} onChange={(e) => setCrew(i, { max_turns: e.target.value })} placeholder="e.g. 20" /></L>
-                <L label="Max budget (USD/turn)"><input className={inp} type="number" min="0" step="0.01" value={c.max_budget_usd} onChange={(e) => setCrew(i, { max_budget_usd: e.target.value })} placeholder="e.g. 0.50" /></L>
-                <L label="Disallowed tools (comma-sep)"><input className={inp} value={c.disallowed_tools} onChange={(e) => setCrew(i, { disallowed_tools: e.target.value })} placeholder="e.g. Bash, mcp__camoufox__agentic_browse" /></L>
+                <L label="Permission mode" hint="How freely the agent acts (agent_sdk): default asks before sensitive actions; bypassPermissions runs unattended — use for background jobs."><select className={inp} value={c.permission_mode} onChange={(e) => setCrew(i, { permission_mode: e.target.value })}>{PERMISSION_MODES.map((p) => <option key={p} value={p}>{p || '(default)'}</option>)}</select></L>
+                <L label="Max turns" hint="Hard cap on reasoning/tool steps in one run — stops a runaway agent. e.g. 20–40."><input className={inp} type="number" min="1" value={c.max_turns} onChange={(e) => setCrew(i, { max_turns: e.target.value })} placeholder="e.g. 20" /></L>
+                <L label="Max budget (USD/turn)" hint="Spend ceiling per turn; the run stops if exceeded. Keeps costs bounded."><input className={inp} type="number" min="0" step="0.01" value={c.max_budget_usd} onChange={(e) => setCrew(i, { max_budget_usd: e.target.value })} placeholder="e.g. 0.50" /></L>
+                <L label="Disallowed tools (comma-sep)" hint="Tools this agent must NOT use, even if its MCP exposes them (e.g. Bash). A safety fence. Comma-separated."><input className={inp} value={c.disallowed_tools} onChange={(e) => setCrew(i, { disallowed_tools: e.target.value })} placeholder="e.g. Bash, mcp__camoufox__agentic_browse" /></L>
               </div>
             </div>
           ))}
@@ -826,9 +831,9 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
       <section className="rounded-xl border border-slate-200 bg-white p-5 mb-5 shadow-sm">
         <h2 className="font-semibold flex items-center gap-2 mb-3"><Tag className="h-4 w-4 text-brand-600" /> Pricing</h2>
         <div className="grid sm:grid-cols-3 gap-3 items-end">
-          <L label="Price model"><select className={inp} value={priceUnit} onChange={(e) => setPriceUnit(e.target.value)}>{PRICE_UNITS.map((u) => <option key={u} value={u}>{u.replace(/_/g, ' ')}</option>)}</select></L>
-          <L label="Price (€)"><input className={inp} type="number" min="0" step="0.01" value={priceEur} onChange={(e) => setPriceEur(e.target.value)} disabled={priceUnit === 'free'} /></L>
-          <L label="Revenue share to you (%)"><input className={inp} type="number" min="0" max="100" value={revenueShare} onChange={(e) => setRevenueShare(e.target.value)} disabled={priceUnit === 'free'} /></L>
+          <L label="Price model" hint="How buyers pay: free, one-off, per run, or monthly subscription."><select className={inp} value={priceUnit} onChange={(e) => setPriceUnit(e.target.value)}>{PRICE_UNITS.map((u) => <option key={u} value={u}>{u.replace(/_/g, ' ')}</option>)}</select></L>
+          <L label="Price (€)" hint="What the buyer pays, in euro. Disabled when the model is free."><input className={inp} type="number" min="0" step="0.01" value={priceEur} onChange={(e) => setPriceEur(e.target.value)} disabled={priceUnit === 'free'} /></L>
+          <L label="Revenue share to you (%)" hint="Your cut of each sale; the platform keeps the rest."><input className={inp} type="number" min="0" max="100" value={revenueShare} onChange={(e) => setRevenueShare(e.target.value)} disabled={priceUnit === 'free'} /></L>
         </div>
         <label className="mt-3 flex items-center gap-2 text-sm text-slate-700">
           <input type="checkbox" checked={isPaid ? true : locked} disabled={isPaid} onChange={(e) => setLocked(e.target.checked)} />
@@ -861,6 +866,15 @@ export default function AgentStudio(props: AgentStudioProps) {
 }
 
 const inp = 'w-full rounded-md border border-slate-200 px-3 py-2 text-sm focus:border-brand-300 focus:ring-1 focus:ring-brand-200 outline-none';
-function L({ label, children, className = '' }: { label: string; children: ReactNode; className?: string }) {
-  return <label className={`block ${className}`}><span className="text-xs font-medium text-slate-700">{label}</span><div className="mt-1">{children}</div></label>;
+function L({ label, children, className = '', hint }: { label: string; children: ReactNode; className?: string; hint?: string }) {
+  // `hint`: una riga muta sotto l'etichetta che spiega COS'E' il campo. Il form ha molti termini
+  // tecnici (Required capabilities, Disallowed tools, Surface, Permission mode) su cui il nuovo
+  // utente si blocca: l'aiuto in linea li scioglie senza mandarlo altrove.
+  return (
+    <label className={`block ${className}`}>
+      <span className="text-xs font-medium text-slate-700">{label}</span>
+      {hint && <span className="mt-0.5 block text-[11px] leading-snug text-slate-400">{hint}</span>}
+      <div className="mt-1">{children}</div>
+    </label>
+  );
 }
