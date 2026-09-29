@@ -416,6 +416,23 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
         </div>
       </div>
 
+      {/* La via FACILE — descrivere l'agente all'assistente — era sepolta in fondo alla pagina
+          (dopo Info/Crews/Trading/Variables/Tools/Orchestration/Pricing), invisibile al nuovo utente
+          che atterra su un form tecnico che parte da "Code (kebab-case)". Qui e' in CIMA. Per un
+          agente nuovo la cornice nomina le due vie; in modifica il testo e' piu' leggero. Il chatSlot
+          e' renderizzato UNA sola volta (qui, non piu' in fondo): e' lo stesso nodo, duplicarlo darebbe
+          due pannelli con stato separato. */}
+      {chatSlot && (
+        <div className="mb-5 flex flex-col gap-3 rounded-xl border border-indigo-200 bg-indigo-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-indigo-900">
+            {editId
+              ? 'Refine this agent conversationally with the assistant, or edit the form below.'
+              : 'Start here: describe the agent — or the team — you want and the assistant drafts it for you, ready to review and tweak below. Prefer to build it by hand? Fill in the form.'}
+          </p>
+          <div className="shrink-0">{chatSlot}</div>
+        </div>
+      )}
+
       {msg && (
         <div className={`mb-4 rounded-lg border p-3 text-sm ${msg.kind === 'ok' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-red-200 bg-red-50 text-red-700'}`}>{msg.text}</div>
       )}
@@ -641,7 +658,6 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
       </details>
 
       <div className="flex items-center gap-3 flex-wrap">
-        {chatSlot}
         <button onClick={saveDraft} disabled={!!busy} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50 disabled:opacity-50">
           {busy === 'save' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save draft
         </button>
