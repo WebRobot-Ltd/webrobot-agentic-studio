@@ -16,13 +16,15 @@
 //   · The "design with chat" panel is an injected `chatSlot` (the host passes one).
 //   · `editId` is a prop (was read from Next's useSearchParams).
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Bot, Plus, Trash2, Loader2, Save, Send, Users, Variable, Wrench, Tag } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Bot, Plus, Trash2, Loader2, Save, Send, Users, Variable, Wrench, Tag, Sparkles } from 'lucide-react';
 import { ReactFlow, Background, Controls, type Node, type Edge as FlowEdge } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {
   getAgenticProfile, saveAgenticProfile, publishAgenticProfile,
   allowedAssets, registerStrategy, deployBot as deployBotCall,
+  startAgentDesignerRun, getAgentRunStatus, getAgentRunResult,
+  extractAgentDefinition, extractAgentNeeds, AgentStudioError,
 } from '../client';
 
 const CATEGORIES = [
@@ -30,6 +32,28 @@ const CATEGORIES = [
   'social_distribution', 'support_agent', 'rag_assistant', 'analytics_agent',
   'finance', 'multi_agent_team', 'other',
 ];
+
+// Il run del progettista e' un RayJob ASINCRONO (decine di secondi): puo' superare l'attesa inline
+// o l'utente puo' chiudere/navigare via. Si ricorda l'executionId in localStorage e lo si riprende
+// al montaggio — sia in corso, sia gia' finito. Tutto in try/catch: senza storage si prosegue senza
+// ripresa. Chiave per sessione (editId o "new") per non applicare un run di un profilo a un altro.
+const RUN_KEY = (ctx: string) => `wr_agent_designer_run:${ctx}`;
+const RUN_MAX_AGE_MS = 30 * 60 * 1000;
+interface RunSalvato { executionId: string; prompt: string; startedAt: number; }
+function leggiRun(ctx: string): RunSalvato | null {
+  try {
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(RUN_KEY(ctx)) : null;
+    if (!raw) return null;
+    const v = JSON.parse(raw);
+    return v && typeof v.executionId === 'string' ? (v as RunSalvato) : null;
+  } catch { return null; }
+}
+function salvaRun(ctx: string, v: RunSalvato): void {
+  try { if (typeof localStorage !== 'undefined') localStorage.setItem(RUN_KEY(ctx), JSON.stringify(v)); } catch { /* private/quota */ }
+}
+function scartaRun(ctx: string): void {
+  try { if (typeof localStorage !== 'undefined') localStorage.removeItem(RUN_KEY(ctx)); } catch { /* ignore */ }
+}
 const ENGINES = ['agent_sdk', 'crewai', 'autogen'];
 const PRICE_UNITS = ['free', 'flat', 'subscription_monthly', 'subscription_yearly'];
 const BINDS = ['env', 'prompt', 'both'];
@@ -175,57 +199,82 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
+  // Ramo "descrivi il team -> l'agente lo progetta" (parita' col pipeline designer).
+  const [askText, setAskText] = useState('');
+  const [generating, setGenerating] = useState(false);
+  const [askPhase, setAskPhase] = useState<string | null>(null);
+  const [askErr, setAskErr] = useState<string | null>(null);
+  const [proposal, setProposal] = useState<any | null>(null);       // agent_definition proposto
+  const runCtx = editId ? String(editId) : 'new';
+
   const isTeam = mode === 'team';   // explicit, not inferred from crew count
   const isPaid = priceUnit !== 'free' && Number(priceEur) > 0;
+
+  // Applica un agent_definition (def) al form. PURA: nessuna fetch. La usano sia il caricamento di
+  // un profilo salvato sia l'APPLY di una proposta dell'agente progettista — un solo punto che sa
+  // tradurre lo spec in stato del form, cosi' i due ingressi non divergono. `meta` porta i campi del
+  // record salvato (id/status/surface/name/version/description) quando ci sono; per una proposta e'
+  // assente e si usano quelli dentro def (profile/display_name/description).
+  const applySpec = useCallback((def: any, meta?: {
+    id?: string | number; status?: string; surface?: string; name?: string; version?: string; description?: string;
+  }) => {
+    def = def || {};
+    if (meta?.id != null) setSavedId(Number(meta.id));
+    if (meta?.status) setStatus(meta.status);
+    if (meta?.surface) setSurface(meta.surface);
+    setMode(def.chat_mode === 'team' ? 'team' : 'single');
+    setCode(def.profile || meta?.name || '');
+    setDisplayName(meta?.name || def.display_name || def.profile || '');
+    setVersion(meta?.version || def.version || '1.0.0');
+    setDescription(meta?.description || def.description || '');
+    const cs: Crew[] = (def.crews || []).map((c: any) => ({
+      id: c.id || 'agent', engine: c.engine || 'agent_sdk', model: c.model || 'claude-sonnet-4-5',
+      system_prompt: c.system_prompt || '', mcp_url: (c.mcp_servers?.[0]?.url) || '',
+      permission_mode: c.permission_mode || '',
+      disallowed_tools: Array.isArray(c.disallowed_tools) ? c.disallowed_tools.join(', ') : (c.disallowed_tools || ''),
+      max_turns: c.max_turns != null ? String(c.max_turns) : '',
+      max_budget_usd: c.max_budget_usd != null ? String(c.max_budget_usd) : '',
+      _raw: c,   // preserve every field (auth, goal_template, multi-server mcp, …) for round-trip
+    }));
+    if (cs.length) setCrews(cs);
+    setEntry(def.orchestration?.entry || cs[0]?.id || 'agent');
+    setEdges(def.orchestration?.edges || []);
+    // variables / local_tools live on the crew node (authored profile-wide).
+    const c0 = (def.crews || [])[0] || {};
+    if (Array.isArray(c0.variables)) setVariables(c0.variables.map((v: any) => ({
+      name: v.name || '', label: v.label || '', default: v.default != null ? String(v.default) : '',
+      bind: v.bind || 'env', secret: !!v.secret, provider: v.provider || '', description: v.description || '',
+    })));
+    if (Array.isArray(c0.local_tools)) setLocalTools(c0.local_tools.map((t: any) => ({
+      name: t.name || '', description: t.description || '', code: t.code || t.functionBody || '',
+    })));
+    // Trading binding (increment 1) — round-trip so a re-edit doesn't drop it.
+    if (def.trading) {
+      const tr = def.trading;
+      setTradingEnabled(true);
+      setTradingMode(tr.mode || 'portfolio');
+      setUniverse(Array.isArray(tr.universe) ? tr.universe.join(', ') : (tr.universe || ''));
+      setVenue(tr.venue || 'BINANCE');
+      setBarInterval(tr.bar_interval || '1h');
+      setTradingCredential(tr.credential_ref || '');
+      const rk = tr.risk || {};
+      setMaxExposurePct(rk.max_exposure_pct != null ? String(rk.max_exposure_pct) : '30');
+      setMaxDrawdownPct(rk.max_drawdown_pct != null ? String(rk.max_drawdown_pct) : '20');
+      setKillSwitch(rk.kill_switch !== false);
+    }
+  }, []);
 
   // Load a PROFILE (Jersey agentic_profiles) into the editor — unified store.
   const loadProfile = (id: string | number) => {
     getAgenticProfile(String(id))
       .then((d: any) => {
         if (d?.error) { setMsg({ kind: 'err', text: d.error }); return; }
-        setSavedId(d.id); setStatus(d.status || 'draft'); setSurface(d.surface || 'background');
-        setMode(((typeof d.spec === 'string' ? (() => { try { return JSON.parse(d.spec); } catch { return {}; } })() : (d.spec || {}))?.chat_mode === 'team') ? 'team' : 'single');
         let def: any = {};
         try { def = typeof d.spec === 'string' ? JSON.parse(d.spec) : (d.spec || {}); } catch { def = {}; }
-        setCode(def.profile || d.name || '');
-        setDisplayName(d.name || def.profile || '');
-        setVersion(d.version || def.version || '1.0.0');
-        setDescription(d.description || def.description || '');
-        const cs: Crew[] = (def.crews || []).map((c: any) => ({
-          id: c.id || 'agent', engine: c.engine || 'agent_sdk', model: c.model || 'claude-sonnet-4-5',
-          system_prompt: c.system_prompt || '', mcp_url: (c.mcp_servers?.[0]?.url) || '',
-          permission_mode: c.permission_mode || '',
-          disallowed_tools: Array.isArray(c.disallowed_tools) ? c.disallowed_tools.join(', ') : (c.disallowed_tools || ''),
-          max_turns: c.max_turns != null ? String(c.max_turns) : '',
-          max_budget_usd: c.max_budget_usd != null ? String(c.max_budget_usd) : '',
-          _raw: c,   // preserve every field (auth, goal_template, multi-server mcp, …) for round-trip
-        }));
-        if (cs.length) setCrews(cs);
-        setEntry(def.orchestration?.entry || cs[0]?.id || 'agent');
-        setEdges(def.orchestration?.edges || []);
-        // variables / local_tools live on the crew node (authored profile-wide).
-        const c0 = (def.crews || [])[0] || {};
-        if (Array.isArray(c0.variables)) setVariables(c0.variables.map((v: any) => ({
-          name: v.name || '', label: v.label || '', default: v.default != null ? String(v.default) : '',
-          bind: v.bind || 'env', secret: !!v.secret, provider: v.provider || '', description: v.description || '',
-        })));
-        if (Array.isArray(c0.local_tools)) setLocalTools(c0.local_tools.map((t: any) => ({
-          name: t.name || '', description: t.description || '', code: t.code || t.functionBody || '',
-        })));
-        // Trading binding (increment 1) — round-trip so a re-edit doesn't drop it.
-        if (def.trading) {
-          const tr = def.trading;
-          setTradingEnabled(true);
-          setTradingMode(tr.mode || 'portfolio');
-          setUniverse(Array.isArray(tr.universe) ? tr.universe.join(', ') : (tr.universe || ''));
-          setVenue(tr.venue || 'BINANCE');
-          setBarInterval(tr.bar_interval || '1h');
-          setTradingCredential(tr.credential_ref || '');
-          const rk = tr.risk || {};
-          setMaxExposurePct(rk.max_exposure_pct != null ? String(rk.max_exposure_pct) : '30');
-          setMaxDrawdownPct(rk.max_drawdown_pct != null ? String(rk.max_drawdown_pct) : '20');
-          setKillSwitch(rk.kill_switch !== false);
-        }
+        applySpec(def, {
+          id: d.id, status: d.status || 'draft', surface: d.surface || 'background',
+          name: d.name, version: d.version, description: d.description,
+        });
       })
       .catch((e: any) => setMsg({ kind: 'err', text: e.message }));
   };
@@ -309,6 +358,84 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
   }, [code, crews, isTeam, entry, edges, declaredVars, declaredTools,
       tradingEnabled, tradingMode, venue, universe, barInterval, tradingCredential,
       maxExposurePct, maxDrawdownPct, killSwitch]);
+
+  // ── "Descrivi il team -> l'agente lo progetta" ────────────────────────────────
+  // Speculare a askForPipeline del pipeline designer: si avvia `webrobot-agent-designer`, se ne fa
+  // polling, se ne legge il result (l'agent_definition), lo si MOSTRA come proposta; l'utente la
+  // applica al form (applySpec) o la scarta. Il run e' di background: sopravvive a timeout/chiusura.
+
+  // Segue un run fino all'esito e ne propone il risultato. Condiviso fra avvio inline e ripresa su
+  // mount. Controlla lo stato PRIMA di dormire, cosi' un run gia' finito si propone subito.
+  const seguiRun = useCallback(async (eid: string) => {
+    setGenerating(true); setAskErr(null); setAskPhase('The designer agent is working…');
+    try {
+      const scadenza = Date.now() + 4 * 60 * 1000;   // attesa inline; oltre, resta salvato e si riprende
+      let stato = '';
+      while (Date.now() < scadenza) {
+        const st = await getAgentRunStatus(eid).catch(() => null);
+        stato = String(st?.persistedStatus || st?.status || '');
+        if (['COMPLETED', 'FAILED', 'STOPPED'].includes(stato)) break;
+        setAskPhase(`The designer agent is working… (${stato.toLowerCase() || 'running'})`);
+        await new Promise((r) => setTimeout(r, 5000));
+      }
+      if (stato !== 'COMPLETED') {
+        if (stato === 'FAILED' || stato === 'STOPPED') { setAskErr(`The agent run ended as ${stato}.`); scartaRun(runCtx); }
+        else setAskErr('The agent is taking a while — you can leave this page; the proposal will appear here when it finishes.');
+        return;
+      }
+      const result = await getAgentRunResult(eid);
+      const def = extractAgentDefinition(result);
+      scartaRun(runCtx);
+      if (!def) {
+        const needs = extractAgentNeeds(result);
+        setAskErr(needs
+          ? `The agent needs more detail: ${needs}`
+          : 'The agent finished without a usable profile — try describing the agent and what it should do more concretely.');
+        return;
+      }
+      setProposal(def);          // non si applica da soli: si mostra e l'utente decide
+    } catch (e) {
+      setAskErr(e instanceof AgentStudioError ? `agent → ${e.status}` : 'The designer agent could not be reached');
+    } finally { setGenerating(false); setAskPhase(null); }
+  }, [runCtx]);
+
+  const askForAgent = useCallback(async () => {
+    const prompt = askText.trim();
+    if (!prompt) return;
+    setAskErr(null); setProposal(null); setGenerating(true); setAskPhase('Starting the designer agent…');
+    let eid: string | undefined;
+    try {
+      // Lo spec corrente (vuoto {} per un profilo nuovo) va all'agente cosi' MODIFICA invece di
+      // ripartire da zero — il goal_template lo inietta come {current_spec}.
+      const currentSpec = crews.length ? JSON.stringify(agentDefinition) : '{}';
+      const run = await startAgentDesignerRun(prompt, currentSpec);
+      eid = run?.executionId;
+    } catch (e) {
+      setAskErr(e instanceof AgentStudioError ? `agent → ${e.status}` : 'The designer agent could not be reached');
+      setGenerating(false); setAskPhase(null); return;
+    }
+    if (!eid) { setAskErr('The agent did not start.'); setGenerating(false); setAskPhase(null); return; }
+    salvaRun(runCtx, { executionId: eid, prompt, startedAt: Date.now() });   // ricorda PRIMA di attendere
+    await seguiRun(eid);
+  }, [askText, crews, agentDefinition, runCtx, seguiRun]);
+
+  const applyProposal = useCallback(() => {
+    if (!proposal) return;
+    applySpec(proposal);            // meta assente: usa profile/display_name/description dentro def
+    setProposal(null);
+    setMsg({ kind: 'ok', text: 'Proposal applied to the form — review and tweak, then Save draft.' });
+  }, [proposal, applySpec]);
+
+  // Ripresa su mount: se c'e' un run salvato e recente per questa sessione, lo si riprende.
+  const seguiRunRef = useRef(seguiRun);
+  seguiRunRef.current = seguiRun;
+  useEffect(() => {
+    const stored = leggiRun(runCtx);
+    if (!stored) return;
+    if (Date.now() - stored.startedAt > RUN_MAX_AGE_MS) { scartaRun(runCtx); return; }
+    setAskText((t) => t || stored.prompt);
+    seguiRunRef.current(stored.executionId);
+  }, [runCtx]);
 
   // Unified store: Studio authors a Jersey agentic_profile (spec = agent_definition);
   // publishing creates a Jersey marketplace listing (pending_approval). Same store the
@@ -416,20 +543,79 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
         </div>
       </div>
 
-      {/* La via FACILE — descrivere l'agente all'assistente — era sepolta in fondo alla pagina
-          (dopo Info/Crews/Trading/Variables/Tools/Orchestration/Pricing), invisibile al nuovo utente
-          che atterra su un form tecnico che parte da "Code (kebab-case)". Qui e' in CIMA. Per un
-          agente nuovo la cornice nomina le due vie; in modifica il testo e' piu' leggero. Il chatSlot
-          e' renderizzato UNA sola volta (qui, non piu' in fondo): e' lo stesso nodo, duplicarlo darebbe
-          due pannelli con stato separato. */}
-      {chatSlot && (
-        <div className="mb-5 flex flex-col gap-3 rounded-xl border border-indigo-200 bg-indigo-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+      {/* Le due VIE FACILI — descrivere in una riga (l'agente progetta e propone) o conversare —
+          erano assenti/sepolte: il nuovo utente atterrava su un form tecnico da "Code (kebab-case)".
+          Qui in CIMA: la riga "Propose" avvia il progettista agentico (webrobot-agent-designer),
+          come il pipeline designer; il chatSlot resta l'alternativa conversazionale, reso una sola
+          volta (tolto dal fondo). Per un profilo nuovo la cornice nomina le vie; in modifica e' piu'
+          leggera. Solo nel designer pieno (non embedded, dove l'host possiede il form). */}
+      {(
+        <div className="mb-5 rounded-xl border border-indigo-200 bg-indigo-50 p-4">
           <p className="text-sm text-indigo-900">
             {editId
-              ? 'Refine this agent conversationally with the assistant, or edit the form below.'
-              : 'Start here: describe the agent — or the team — you want and the assistant drafts it for you, ready to review and tweak below. Prefer to build it by hand? Fill in the form.'}
+              ? 'Describe a change and the assistant redesigns this agent — or edit the form below.'
+              : 'Start here: describe the agent — or the team — you want and the assistant designs it for you, ready to review and tweak below. Prefer to build it by hand? Fill in the form.'}
           </p>
-          <div className="shrink-0">{chatSlot}</div>
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+            <div className="flex flex-1 items-center gap-2">
+              <input
+                className="flex-1 rounded-md border border-indigo-200 px-3 py-2 text-sm"
+                placeholder="Describe the agent or team — e.g. “a research agent that monitors a topic daily and emails a digest”"
+                value={askText}
+                onChange={(e) => setAskText(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') askForAgent(); }}
+                disabled={generating}
+              />
+              <button
+                type="button"
+                onClick={askForAgent}
+                disabled={generating || !askText.trim()}
+                className="inline-flex items-center gap-1 rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                title="Design an agent from this description — you review it before anything changes"
+              >
+                {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                {generating ? 'Designing…' : 'Propose'}
+              </button>
+            </div>
+            {chatSlot && <div className="shrink-0">{chatSlot}</div>}
+          </div>
+          {askPhase && !askErr && <p className="mt-2 text-xs text-indigo-700">{askPhase}</p>}
+          {askErr && <p className="mt-2 text-xs text-rose-600">{askErr}</p>}
+        </div>
+      )}
+
+      {/* La proposta dell'agente progettista: non applicata da sola, si vede e si decide. */}
+      {proposal && (
+        <div className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-semibold text-emerald-900">
+              🤖 Proposed {proposal.chat_mode === 'team' ? `team of ${(proposal.crews || []).length} agents` : 'agent'}
+            </span>
+            {(proposal.display_name || proposal.profile) && (
+              <span className="rounded border border-emerald-200 bg-white px-1.5 py-0.5 text-xs text-emerald-700">
+                {proposal.display_name || proposal.profile}
+              </span>
+            )}
+            {Array.isArray(proposal.crews) && proposal.crews.length > 0 && (
+              <span className="text-xs text-emerald-700">
+                {proposal.crews.map((c: any) => c.id).filter(Boolean).join(' · ')}
+              </span>
+            )}
+            <span className="flex-1" />
+            <button type="button" onClick={applyProposal}
+              className="rounded-md bg-emerald-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-emerald-700">
+              Apply to the form
+            </button>
+            <button type="button" onClick={() => setProposal(null)}
+              className="rounded-md px-2.5 py-1 text-xs text-slate-500 hover:bg-white">
+              Discard
+            </button>
+          </div>
+          {proposal.description && <p className="mt-1 text-xs text-emerald-800">{proposal.description}</p>}
+          <details className="mt-2">
+            <summary className="cursor-pointer text-xs text-emerald-700">See the proposed definition</summary>
+            <pre className="mt-2 max-h-64 overflow-auto rounded-md border border-emerald-200 bg-white p-2 text-[11px] leading-snug">{JSON.stringify(proposal, null, 2)}</pre>
+          </details>
         </div>
       )}
 

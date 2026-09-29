@@ -15,6 +15,15 @@ export interface AgentStudioConfig {
   apiBase: string;
   /** Returns the current bearer token (or null). A function, so a rotated token is picked up. */
   getToken: () => string | null;
+  /**
+   * Percorso da cui l'host dice qual e' il profilo dell'agente PROGETTISTA di profili agentici
+   * (`webrobot-agent-designer`). Deve rispondere `{ id: <number> }`. Serve per il ramo "descrivi il
+   * team -> l'agente lo progetta": quel profilo e' di SISTEMA (org della piattaforma) e l'elenco
+   * `/agentic/profiles` e' filtrato per organizzazione, quindi un tenant non lo vede e cercarlo per
+   * nome da qui non funziona. L'host lo risolve con la propria chiave di piattaforma e ne restituisce
+   * il solo id. Stesso schema del pipeline studio (designerProfileUrl). Assente: il ramo e' disattivo.
+   */
+  agentDesignerProfileUrl?: string;
 }
 
 let _config: AgentStudioConfig | null = null;
@@ -112,3 +121,110 @@ export const deployBot = (body: unknown, organizationId?: string) =>
     `/api/trading/bots${organizationId ? `?organizationId=${encodeURIComponent(organizationId)}` : ''}`,
     body,
   );
+
+// ── Design an agent profile from natural language (the "describe -> agent designs it" loop) ──
+//
+// Speculare al pipeline studio: si avvia il profilo di sistema `webrobot-agent-designer`, se ne fa
+// polling e se ne legge il RESULT (che e' l'agent_definition JSON), mostrato poi come proposta con
+// diff nel form. Gli endpoint sono gli stessi della piattaforma, proxati same-origin dall'host
+// (/api/agentic/start | /{eid} | /executions).
+
+export interface AgentRun { executionId: string }
+
+let _agentDesignerProfileId: number | null = null;
+
+export async function findAgentDesignerProfileId(): Promise<number> {
+  if (_agentDesignerProfileId) return _agentDesignerProfileId;
+  const url = config().agentDesignerProfileUrl;
+  if (!url) throw new AgentStudioError(501, 'agentDesignerProfileUrl non configurato: ramo "descrivi" disattivo');
+  const { apiBase } = config();
+  const r = await fetch(`${apiBase}${url}`, { cache: 'no-store' });
+  if (!r.ok) throw new AgentStudioError(r.status, `designer profile lookup -> ${r.status}`);
+  const j = await r.json().catch(() => null);
+  if (!(j as any)?.id) throw new AgentStudioError(404, 'profilo "webrobot-agent-designer" non raggiungibile');
+  _agentDesignerProfileId = Number((j as any).id);
+  return _agentDesignerProfileId;
+}
+
+export async function startAgentDesignerRun(goal: string, currentSpec = '{}'): Promise<AgentRun> {
+  const profileId = await findAgentDesignerProfileId();
+  // `inputs` e' una mappa di STRINGHE: i nomi combaciano con i segnaposto del goal_template del
+  // profilo ({goal} e {current_spec}); cambiarli qui li scollega in silenzio.
+  return call<AgentRun>('POST', '/api/agentic/start', { profileId, inputs: { goal, current_spec: currentSpec } });
+}
+
+export const getAgentRunStatus = (executionId: string) =>
+  call<any>('GET', `/api/agentic/${encodeURIComponent(executionId)}`);
+
+/**
+ * Il result di un run, letto PER execution_id: lo stato ora lo porta (AgenticApiV10.status). Ripiego
+ * sull'elenco `/executions` (chiave `executions`, non `data`) per i backend che non lo espongono
+ * ancora. Non si pesca dalle ultime N se lo stato basta: e' l'esito voluto.
+ */
+export async function getAgentRunResult(executionId: string): Promise<any | null> {
+  try {
+    const st = await getAgentRunStatus(executionId);
+    if (st && st.result != null && st.result !== '') return st.result;
+  } catch { /* backend senza result nello stato -> ripiego */ }
+  const list = await call<any>('GET', '/api/agentic/executions?limit=100');
+  const rows: any[] = Array.isArray(list) ? list : (list?.executions ?? list?.data ?? []);
+  const row = rows.find((r) => r?.executionId === executionId);
+  return row ? (row.result ?? null) : null;
+}
+
+/**
+ * Il TESTO grezzo dentro il result, prima di ogni parse. Tre forme: stringa nuda, STRINGA JSON
+ * impacchettata (il campo server e' String/JSONB), oggetto `{<nodo>:{<crew>:"<testo>"}}`.
+ */
+function resultToText(result: any): string | null {
+  if (result === null || result === undefined || result === '') return null;
+  let r: any = result;
+  if (typeof r === 'string') {
+    const s = r.trim();
+    if (s.startsWith('{') || s.startsWith('[')) { try { r = JSON.parse(s); } catch { return r.trim() || null; } }
+  }
+  if (typeof r === 'string') return r.trim() || null;
+  // se e' gia' l'agent_definition (ha crews) lo si serializza per il passo di parse uniforme
+  if (r && typeof r === 'object' && Array.isArray((r as any).crews)) return JSON.stringify(r);
+  for (const nodo of Object.values(r as Record<string, any>)) {
+    if (typeof nodo === 'string' && nodo.trim()) return nodo.trim();
+    if (nodo && typeof nodo === 'object') {
+      if (Array.isArray((nodo as any).crews)) return JSON.stringify(nodo);
+      for (const v of Object.values(nodo as Record<string, any>)) {
+        if (typeof v === 'string' && v.trim()) return v.trim();
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * La domanda dell'agente quando NON progetta ma chiede (descrizione troppo vaga): "NEEDS: <cosa>".
+ * Torna il testo (senza prefisso) o null se e' una proposta vera.
+ */
+export function extractAgentNeeds(result: any): string | null {
+  const t = resultToText(result);
+  if (!t) return null;
+  const m = t.match(/^NEEDS:\s*([\s\S]*)$/);
+  return m ? (m[1].trim() || 'The agent needs more detail to design this.') : null;
+}
+
+/**
+ * Tira fuori l'agent_definition dal result: apre eventuali recinti markdown, poi JSON.parse. Torna
+ * l'oggetto {profile, crews, orchestration?, ...} o null se non c'e' nulla di utilizzabile (incl.
+ * il caso NEEDS, che si legge con extractAgentNeeds).
+ */
+export function extractAgentDefinition(result: any): any | null {
+  let t = resultToText(result);
+  if (!t) return null;
+  if (t.startsWith('NEEDS:')) return null;
+  const fence = t.match(/```(?:json)?\s*\n([\s\S]*?)```/);
+  if (fence) t = fence[1].trim();
+  // taglia eventuale prosa prima del primo '{'
+  const i = t.indexOf('{');
+  if (i > 0) t = t.slice(i);
+  try {
+    const def = JSON.parse(t);
+    return def && typeof def === 'object' && Array.isArray(def.crews) ? def : null;
+  } catch { return null; }
+}
