@@ -270,3 +270,26 @@ export const saveMcpCredential = (provider: string, apiKey: string, opts?: { end
     api_key: apiKey,
     ...(opts?.endpoint ? { endpoint: opts.endpoint } : {}),
   });
+
+// ── Canale draft del profilo agentico (Guided / Design-with-chat -> resync nel form) ──
+// Speculare a getPipelineDraft del pipeline studio. La chat scrive il draft (tool MCP
+// agentProfileDraftPut, lato server); lo studio lo legge in polling e lo propone. GET a 204 = niente.
+export interface AgentProfileDraft {
+  context: string;
+  profileSpec: string;   // agent_definition come JSON (stringa)
+  note: string | null;
+  updatedAt: string | null;
+}
+export const getAgentProfileDraft = async (context = 'agentic:agent-studio'): Promise<AgentProfileDraft | null> => {
+  try {
+    const r = await fetch(`${config().apiBase}/api/agentic/profile-draft?context=${encodeURIComponent(context)}`, {
+      headers: { ...(config().getToken() ? { Authorization: `Bearer ${config().getToken()}` } : {}) },
+      cache: 'no-store',
+    });
+    if (r.status === 204 || !r.ok) return null;
+    const d = await r.json().catch(() => null);
+    return d && (d as AgentProfileDraft).profileSpec ? (d as AgentProfileDraft) : null;
+  } catch { return null; }
+};
+export const deleteAgentProfileDraft = (context = 'agentic:agent-studio') =>
+  call<any>('DELETE', `/api/agentic/profile-draft?context=${encodeURIComponent(context)}`);

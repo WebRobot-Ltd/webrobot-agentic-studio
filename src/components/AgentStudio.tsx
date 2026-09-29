@@ -26,7 +26,11 @@ import {
   startAgentDesignerRun, getAgentRunStatus, getAgentRunResult,
   extractAgentDefinition, extractAgentNeeds, AgentStudioError,
   getMcpIntegrations, mcpAuthHeader, saveMcpCredential, type McpIntegration,
+  getAgentProfileDraft, deleteAgentProfileDraft,
 } from '../client';
+
+// Contesto del canale draft, uguale al pageContext che DesignWithChat inietta nella chat.
+const DRAFT_CTX = 'agentic:agent-studio';
 
 const CATEGORIES = [
   'data_engineer', 'scraping_agent', 'research_agent', 'monitoring_agent',
@@ -206,6 +210,7 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
   const [askPhase, setAskPhase] = useState<string | null>(null);
   const [askErr, setAskErr] = useState<string | null>(null);
   const [proposal, setProposal] = useState<any | null>(null);       // agent_definition proposto
+  const proposalRef = useRef<any | null>(null); proposalRef.current = proposal;   // per il polling draft
   const runCtx = editId ? String(editId) : 'new';
 
   // MCP integrati (con credenziali per-org). Catalogo dall'host; input chiave e stato per (crew,provider).
@@ -425,12 +430,42 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
     await seguiRun(eid);
   }, [askText, crews, agentDefinition, runCtx, seguiRun]);
 
+  // updatedAt dell'ultimo draft gia' consumato/scartato: senza, il polling lo riproporrebbe subito.
+  const draftSeen = useRef<string | null>(null);
+
   const applyProposal = useCallback(() => {
     if (!proposal) return;
     applySpec(proposal);            // meta assente: usa profile/display_name/description dentro def
     setProposal(null);
+    deleteAgentProfileDraft(DRAFT_CTX).catch(() => {});   // consumato: svuota il canale
     setMsg({ kind: 'ok', text: 'Proposal applied to the form — review and tweak, then Save draft.' });
   }, [proposal, applySpec]);
+
+  const discardProposal = useCallback(() => {
+    setProposal(null);
+    deleteAgentProfileDraft(DRAFT_CTX).catch(() => {});
+  }, []);
+
+  // POLLING del canale draft: quando la chat (Guided o Design-with-chat) scrive un profilo, lo
+  // studio lo raccoglie e lo mostra come proposta — il resync che mancava. `draftSeen` evita di
+  // riproporre lo stesso draft dopo che e' stato applicato/scartato. Non tocca una proposta gia'
+  // a schermo (es. quella inline di "Propose").
+  useEffect(() => {
+    let alive = true;
+    const tick = async () => {
+      const d = await getAgentProfileDraft(DRAFT_CTX);
+      if (!alive || !d) return;
+      if (d.updatedAt && d.updatedAt === draftSeen.current) return;
+      if (proposalRef.current) return;                    // non sovrascrivo una proposta gia' aperta
+      const def = extractAgentDefinition(d.profileSpec);
+      if (!def) return;
+      draftSeen.current = d.updatedAt || String(Date.now());
+      setProposal(def);
+    };
+    const h = setInterval(tick, 4000);
+    tick();
+    return () => { alive = false; clearInterval(h); };
+  }, []);
 
   // Ripresa su mount: se c'e' un run salvato e recente per questa sessione, lo si riprende.
   const seguiRunRef = useRef(seguiRun);
@@ -642,7 +677,7 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
               className="rounded-md bg-emerald-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-emerald-700">
               Apply to the form
             </button>
-            <button type="button" onClick={() => setProposal(null)}
+            <button type="button" onClick={discardProposal}
               className="rounded-md px-2.5 py-1 text-xs text-slate-500 hover:bg-white">
               Discard
             </button>
