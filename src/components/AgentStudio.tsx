@@ -66,8 +66,8 @@ const BINDS = ['env', 'prompt', 'both'];
 // Both output modes are agentic — portfolio (fixes target weights, node converges) is the
 // validated path; orders (emits orders/signals directly) is the less-mature signal mode.
 const TRADING_MODES = [
-  { v: 'portfolio', label: 'Portafoglio · pesi (validato)' },
-  { v: 'orders', label: 'Ordini · signal (sperimentale)' },
+  { v: 'portfolio', label: 'Portfolio · weights (validated)' },
+  { v: 'orders', label: 'Orders · signal (experimental)' },
 ];
 // Venue in MAIUSCOLO come la allow-list di organizations.trading_limits (es. Screebits: ["BINANCE"]).
 const VENUES = ['BINANCE', 'BINANCE_TESTNET', 'BYBIT', 'BYBIT_TESTNET'];
@@ -529,8 +529,8 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
   // super_admin senza org numerica riceve un 400 chiaro che chiede ?organizationId del tenant.
   const deployBot = async () => {
     const syms = universe.split(',').map((s) => s.trim()).filter(Boolean);
-    if (!syms.length) { setMsg({ kind: 'err', text: 'Definisci almeno un asset nell’universo.' }); return; }
-    if (!venue) { setMsg({ kind: 'err', text: 'Scegli un venue.' }); return; }
+    if (!syms.length) { setMsg({ kind: 'err', text: 'Define at least one asset in the universe.' }); return; }
+    if (!venue) { setMsg({ kind: 'err', text: 'Choose a venue.' }); return; }
     setBusy('deploy'); setMsg(null);
     try {
       // 1) registra la strategia agentica → strategyId
@@ -542,13 +542,13 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
         ...(tradingOrgId.trim() ? { organizationId: tradingOrgId.trim() } : {}),
       });
       const strategyId = sj?.id ?? sj?.data?.id;
-      if (!strategyId) throw new Error('strategyId non restituito dal registro strategie');
+      if (!strategyId) throw new Error('Strategy registry did not return a strategyId');
       // 2) avvia il bot (universo → instruments per il portfolio manager; singolo → instrument)
       const deployBody: Record<string, unknown> = { strategyId, venue, mode: tradingMode };
       if (tradingMode === 'portfolio') deployBody.instruments = syms.join(',');
       else deployBody.instrument = syms[0];
       await deployBotCall(deployBody, tradingOrgId.trim() || undefined);
-      setMsg({ kind: 'ok', text: `Bot avviato (strategyId ${strategyId}). Lo trovi in Trading.` });
+      setMsg({ kind: 'ok', text: `Bot started (strategyId ${strategyId}). You can find it under Trading.` });
       onDeployed?.(strategyId);
     } catch (e: any) { setMsg({ kind: 'err', text: e.message }); }
     finally { setBusy(null); }
@@ -821,10 +821,10 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
         <div className="flex items-center justify-between mb-1">
           <h2 className="font-semibold flex items-center gap-2">📈 Trading</h2>
           <label className="inline-flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={tradingEnabled} onChange={(e) => setTradingEnabled(e.target.checked)} /> Bot di trading
+            <input type="checkbox" checked={tradingEnabled} onChange={(e) => setTradingEnabled(e.target.checked)} /> Trading bot
           </label>
         </div>
-        <p className="text-xs text-slate-500 mb-3">La strategia resta un agente; questi campi la legano a un mercato. L&apos;agente fissa i pesi sull&apos;<b>universo di asset</b> — il nodo Nautilus converge.</p>
+        <p className="text-xs text-slate-500 mb-3">The strategy stays an agent; these fields bind it to a market. The agent sets the weights on the <b>asset universe</b> — the Nautilus node converges to them.</p>
         {tradingEnabled && (
           <div className="space-y-3">
             <div className="inline-flex rounded-md border border-slate-200 bg-white p-0.5 text-xs">
@@ -836,17 +836,17 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
               ))}
             </div>
             <div className="grid sm:grid-cols-2 gap-3">
-              <L label="Tenant (org id) — vuoto = la tua org">
-                <input className={inp} value={tradingOrgId} onChange={(e) => setTradingOrgId(e.target.value)} placeholder="super_admin: es. 5 (Screebits)" />
+              <L label="Tenant (org id) — empty = your org">
+                <input className={inp} value={tradingOrgId} onChange={(e) => setTradingOrgId(e.target.value)} placeholder="super_admin: e.g. 5 (Screebits)" />
               </L>
               <div className="flex items-end text-[11px] pb-1">
                 {allowedErr ? <span className="text-amber-700">{allowedErr}</span>
-                  : allowed && !allowed.enabled ? <span className="text-amber-700">Trading dal vivo NON abilitato per questa org — abilitalo in /dashboard/trading/limits.</span>
-                  : allowed ? <span className="text-emerald-700">✓ Trading abilitato · {allowed.instruments.length} strumenti consentiti</span>
-                  : <span className="text-slate-400">carico gli asset consentiti…</span>}
+                  : allowed && !allowed.enabled ? <span className="text-amber-700">Live trading is NOT enabled for this org — enable it in /dashboard/trading/limits.</span>
+                  : allowed ? <span className="text-emerald-700">✓ Trading enabled · {allowed.instruments.length} allowed instruments</span>
+                  : <span className="text-slate-400">loading allowed assets…</span>}
               </div>
             </div>
-            <L label="Universo di asset — la strategia sorveglia e alloca su questi (seleziona dalla allow-list)">
+            <L label="Asset universe — the strategy monitors and allocates across these (select from the allow-list)">
               {allowed && allowed.instruments.length > 0 ? (
                 <div className="flex flex-wrap gap-2">
                   {allowed.instruments.map((sym) => {
@@ -866,20 +866,20 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
             <div className="grid sm:grid-cols-3 gap-3">
               <L label="Venue"><select className={inp} value={venue} onChange={(e) => setVenue(e.target.value)}>{(allowed && allowed.venues.length ? allowed.venues : VENUES).map((v) => <option key={v}>{v}</option>)}</select></L>
               <L label="Bar interval"><select className={inp} value={barInterval} onChange={(e) => setBarInterval(e.target.value)}>{BAR_INTERVALS.map((b) => <option key={b}>{b}</option>)}</select></L>
-              <L label="Credenziali exchange"><input className={inp} value={tradingCredential} onChange={(e) => setTradingCredential(e.target.value)} placeholder="nome cloud_credential" /></L>
+              <L label="Exchange credentials"><input className={inp} value={tradingCredential} onChange={(e) => setTradingCredential(e.target.value)} placeholder="cloud_credential name" /></L>
             </div>
             <div className="grid sm:grid-cols-3 gap-3">
-              <L label="Max esposizione %"><input type="number" className={inp} value={maxExposurePct} onChange={(e) => setMaxExposurePct(e.target.value)} /></L>
-              <L label="Max drawdown % (vincolo)"><input type="number" className={inp} value={maxDrawdownPct} onChange={(e) => setMaxDrawdownPct(e.target.value)} /></L>
-              <L label="Kill-switch"><span className="inline-flex items-center gap-2 text-sm h-9"><input type="checkbox" checked={killSwitch} onChange={(e) => setKillSwitch(e.target.checked)} /> attivo</span></L>
+              <L label="Max exposure %"><input type="number" className={inp} value={maxExposurePct} onChange={(e) => setMaxExposurePct(e.target.value)} /></L>
+              <L label="Max drawdown % (constraint)"><input type="number" className={inp} value={maxDrawdownPct} onChange={(e) => setMaxDrawdownPct(e.target.value)} /></L>
+              <L label="Kill-switch"><span className="inline-flex items-center gap-2 text-sm h-9"><input type="checkbox" checked={killSwitch} onChange={(e) => setKillSwitch(e.target.checked)} /> enabled</span></L>
             </div>
-            <p className="text-[11px] text-amber-700">⚠ Le credenziali devono essere del <b>cliente finale</b>, non ricadere sul tenant. I guardrail (trading abilitato, tetto, allow-list) li applica il server.</p>
+            <p className="text-[11px] text-amber-700">⚠ Credentials must belong to the <b>end customer</b>, not fall back to the tenant. The guardrails (trading enabled, cap, allow-list) are enforced by the server.</p>
             <div className="flex items-center gap-3 pt-1">
               <button onClick={deployBot} disabled={busy === 'deploy' || !universe.trim()}
                 className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50">
                 {busy === 'deploy' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Deploy bot
               </button>
-              <span className="text-[11px] text-slate-500">Registra la strategia (kind: agentic) e avvia il bot. Un super_admin deve operare per conto di un tenant.</span>
+              <span className="text-[11px] text-slate-500">Registers the strategy (kind: agentic) and starts the bot. A super_admin must act on behalf of a tenant.</span>
             </div>
           </div>
         )}
