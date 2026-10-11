@@ -13,8 +13,8 @@ consumes.
 
 - Node kinds: **RAG assistant**, **tool agent** (MCP), **HITL gate** (`ask_human`), **publisher**.
 - Approaches: `rag` (single), `sequential` (forward DAG), `loop` (feedback edge).
-- Build by hand, or **describe it in natural language** and have the backend model the graph
-  (`/api/agents/generate`), then review on the canvas.
+- Build by hand, or **describe it in natural language** and have the agentic designer
+  (`webrobot-agent-designer`, needs `agentDesignerProfileUrl`) model the graph, then review on the canvas.
 - Save a draft and submit for approval (agent-template routes).
 
 ## Install
@@ -63,7 +63,7 @@ pipeline studio:
 
 Prefixed with the configured `apiBase`:
 
-- `POST /api/agents/generate` — natural-language → `agent_definition`
+- `POST /api/agentic/start`, `GET /api/agentic/:executionId`, `GET /api/agentic/executions` — agent-designer runs (natural language → `agent_definition`)
 - `POST/PUT /api/admin/agent-templates(/:id)`, `POST /api/admin/agent-templates/:id/submit`
 - `GET/POST/PUT /api/admin/agentic/profiles(/:id)`
 

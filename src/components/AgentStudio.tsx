@@ -23,11 +23,14 @@ import '@xyflow/react/dist/style.css';
 import {
   getAgenticProfile, saveAgenticProfile, publishAgenticProfile,
   allowedAssets, registerStrategy, deployBot as deployBotCall,
-  startAgentDesignerRun, getAgentRunStatus, getAgentRunResult,
-  extractAgentDefinition, extractAgentNeeds, AgentStudioError,
+  startAgentDesignerRun, extractAgentDefinition, AgentStudioError,
   getMcpIntegrations, mcpAuthHeader, saveMcpCredential, type McpIntegration,
   getAgentProfileDraft, deleteAgentProfileDraft,
 } from '../client';
+import {
+  readStoredRun as leggiRun, storeRun as salvaRun, clearStoredRun as scartaRun,
+  followAgentDesignerRun, RUN_MAX_AGE_MS,
+} from '../agentDesignerRun';
 
 // Contesto del canale draft, uguale al pageContext che DesignWithChat inietta nella chat.
 const DRAFT_CTX = 'agentic:agent-studio';
@@ -38,27 +41,7 @@ const CATEGORIES = [
   'finance', 'multi_agent_team', 'other',
 ];
 
-// Il run del progettista e' un RayJob ASINCRONO (decine di secondi): puo' superare l'attesa inline
-// o l'utente puo' chiudere/navigare via. Si ricorda l'executionId in localStorage e lo si riprende
-// al montaggio — sia in corso, sia gia' finito. Tutto in try/catch: senza storage si prosegue senza
-// ripresa. Chiave per sessione (editId o "new") per non applicare un run di un profilo a un altro.
-const RUN_KEY = (ctx: string) => `wr_agent_designer_run:${ctx}`;
-const RUN_MAX_AGE_MS = 30 * 60 * 1000;
-interface RunSalvato { executionId: string; prompt: string; startedAt: number; }
-function leggiRun(ctx: string): RunSalvato | null {
-  try {
-    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(RUN_KEY(ctx)) : null;
-    if (!raw) return null;
-    const v = JSON.parse(raw);
-    return v && typeof v.executionId === 'string' ? (v as RunSalvato) : null;
-  } catch { return null; }
-}
-function salvaRun(ctx: string, v: RunSalvato): void {
-  try { if (typeof localStorage !== 'undefined') localStorage.setItem(RUN_KEY(ctx), JSON.stringify(v)); } catch { /* private/quota */ }
-}
-function scartaRun(ctx: string): void {
-  try { if (typeof localStorage !== 'undefined') localStorage.removeItem(RUN_KEY(ctx)); } catch { /* ignore */ }
-}
+// Il run del progettista (RayJob asincrono) si ricorda/riprende via ../agentDesignerRun.
 const ENGINES = ['agent_sdk', 'crewai', 'autogen'];
 const PRICE_UNITS = ['free', 'flat', 'subscription_monthly', 'subscription_yearly'];
 const BINDS = ['env', 'prompt', 'both'];
@@ -380,30 +363,20 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
   const seguiRun = useCallback(async (eid: string) => {
     setGenerating(true); setAskErr(null); setAskPhase('The designer agent is working…');
     try {
-      const scadenza = Date.now() + 4 * 60 * 1000;   // attesa inline; oltre, resta salvato e si riprende
-      let stato = '';
-      while (Date.now() < scadenza) {
-        const st = await getAgentRunStatus(eid).catch(() => null);
-        stato = String(st?.persistedStatus || st?.status || '');
-        if (['COMPLETED', 'FAILED', 'STOPPED'].includes(stato)) break;
-        setAskPhase(`The designer agent is working… (${stato.toLowerCase() || 'running'})`);
-        await new Promise((r) => setTimeout(r, 5000));
-      }
-      if (stato !== 'COMPLETED') {
-        if (stato === 'FAILED' || stato === 'STOPPED') { setAskErr(`The agent run ended as ${stato}.`); scartaRun(runCtx); }
-        else setAskErr('The agent is taking a while — you can leave this page; the proposal will appear here when it finishes.');
+      const esito = await followAgentDesignerRun(eid,
+        (stato) => setAskPhase(`The designer agent is working… (${stato.toLowerCase() || 'running'})`));
+      if (esito.kind === 'pending') {
+        setAskErr('The agent is taking a while — you can leave this page; the proposal will appear here when it finishes.');
         return;
       }
-      const result = await getAgentRunResult(eid);
-      const def = extractAgentDefinition(result);
       scartaRun(runCtx);
-      if (!def) {
-        const needs = extractAgentNeeds(result);
-        setAskErr(needs
-          ? `The agent needs more detail: ${needs}`
-          : 'The agent finished without a usable profile — try describing the agent and what it should do more concretely.');
+      if (esito.kind === 'ended') { setAskErr(`The agent run ended as ${esito.status}.`); return; }
+      if (esito.kind === 'needs') { setAskErr(`The agent needs more detail: ${esito.question}`); return; }
+      if (esito.kind === 'empty') {
+        setAskErr('The agent finished without a usable profile — try describing the agent and what it should do more concretely.');
         return;
       }
+      const def = esito.def;
       setProposal(def);          // non si applica da soli: si mostra e l'utente decide
     } catch (e) {
       setAskErr(e instanceof AgentStudioError ? `agent → ${e.status}` : 'The designer agent could not be reached');

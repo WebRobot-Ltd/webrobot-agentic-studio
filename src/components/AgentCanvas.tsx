@@ -13,7 +13,7 @@
 //   kind 'publisher' → side-effecting output (e.g. post via an MCP)
 // approach: 'rag' (single) · 'sequential' (forward DAG) · 'loop' (feedback edge).
 
-import { useCallback, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   ReactFlow, ReactFlowProvider, Background, Controls, MiniMap,
   addEdge, useNodesState, useEdgesState, Handle, Position,
@@ -22,8 +22,11 @@ import {
 import '@xyflow/react/dist/style.css';
 import { Bot, Trash2, Save, Send, Brain, Wrench, UserCheck, Megaphone, Flag, Sparkles, Loader2 } from 'lucide-react';
 import {
-  generateAgents, saveAgenticProfile, publishAgenticProfile, AgentStudioError,
+  saveAgenticProfile, publishAgenticProfile, startAgentDesignerRun, AgentStudioError,
 } from '../client';
+import {
+  readStoredRun, storeRun, clearStoredRun, followAgentDesignerRun, RUN_MAX_AGE_MS,
+} from '../agentDesignerRun';
 
 type Kind = 'rag' | 'agent' | 'hitl' | 'publisher';
 interface NodeData {
@@ -83,6 +86,45 @@ function AgentNode({ data, selected }: { data: NodeData; selected: boolean }) {
 }
 const nodeTypes = { agent: AgentNode };
 
+// "Generate" runs the agentic designer (webrobot-agent-designer), not a single inference. Its run
+// is remembered under this context so it resumes on mount if the user leaves mid-run.
+const RUN_CTX = 'canvas';
+
+const APPROACH_HINT: Record<'rag' | 'sequential' | 'loop', string> = {
+  rag: 'a single RAG assistant agent (one crew, answers from the knowledge base)',
+  sequential: 'a sequential team (forward DAG: each agent feeds the next)',
+  loop: 'an agentic loop (a team with a feedback edge, e.g. draft -> review -> revise)',
+};
+
+/**
+ * The designer returns an agent_definition whose orchestration may reference NODE ids
+ * ({nodes:[{id, crew}], edges:[{from,to}]}) rather than crew ids. The canvas keys nodes by crew
+ * id, so resolve every edge/entry reference to its crew and drop the ones that point nowhere.
+ */
+function toCanvasDef(def: any): any {
+  const crews: any[] = (Array.isArray(def?.crews) ? def.crews : []).filter((c: any) => c && c.id);
+  const orch = def?.orchestration || {};
+  const crewIds = new Set(crews.map((c) => String(c.id)));
+  const nodeToCrew = new Map<string, string>();
+  for (const n of Array.isArray(orch.nodes) ? orch.nodes : []) {
+    if (n?.id != null) nodeToCrew.set(String(n.id), String(n.crew ?? n.crew_id ?? n.id));
+  }
+  const toCrew = (ref: any): string | undefined => {
+    if (ref == null) return undefined;
+    const id = nodeToCrew.get(String(ref)) ?? String(ref);
+    return crewIds.has(id) ? id : undefined;
+  };
+  const seen = new Set<string>();
+  const edges = (Array.isArray(orch.edges) ? orch.edges : [])
+    .map((e: any) => ({ from: toCrew(e?.from ?? e?.source), to: toCrew(e?.to ?? e?.target) }))
+    .filter((e: any) => {
+      const k = `${e.from}->${e.to}`;
+      if (!e.from || !e.to || seen.has(k)) return false;
+      seen.add(k); return true;
+    });
+  return { ...def, crews, orchestration: { ...orch, entry: toCrew(orch.entry) ?? crews[0]?.id, edges } };
+}
+
 let _id = 1;
 const newId = (kind: Kind) => `${kind}${_id++}`;
 
@@ -122,6 +164,8 @@ function Canvas({ chatSlot }: { chatSlot?: ReactNode }) {
 
   const [nlPrompt, setNlPrompt] = useState('');
   const [gen, setGen] = useState(false);
+  const [genPhase, setGenPhase] = useState<string | null>(null);
+  const [needs, setNeeds] = useState<string | null>(null);   // the designer's NEEDS question
 
   const loadFromDef = (def: any) => {
     const crews: any[] = def?.crews || [];
@@ -154,20 +198,69 @@ function Canvas({ chatSlot }: { chatSlot?: ReactNode }) {
     setSelId(null);
   };
 
-  const generate = async () => {
-    if (!nlPrompt.trim()) { setMsg({ k: 'err', t: 'Describe the agent/team you want.' }); return; }
-    setGen(true); setMsg(null);
+  // Follows a designer run to its outcome and lays the result out on the canvas. Shared by the
+  // inline start and the resume-on-mount. A run that outlasts the inline wait stays stored.
+  const followRun = useCallback(async (eid: string) => {
+    setGen(true); setNeeds(null); setMsg(null); setGenPhase('The designer agent is working…');
     try {
-      const j = await generateAgents(nlPrompt, approach);
-      const def = j.agent_definition || j.data?.agent_definition || j;
-      if (!def?.crews?.length) throw new Error('generator returned no crews');
+      const out = await followAgentDesignerRun(eid,
+        (st) => setGenPhase(`The designer agent is working… (${st.toLowerCase() || 'running'})`));
+      if (out.kind === 'pending') {
+        setMsg({ k: 'ok', t: 'The designer agent is taking a while — you can leave this page; the graph will appear here when it finishes.' });
+        return;
+      }
+      clearStoredRun(RUN_CTX);
+      if (out.kind === 'ended') { setMsg({ k: 'err', t: `The designer run ended as ${out.status}.` }); return; }
+      if (out.kind === 'needs') { setNeeds(out.question); return; }
+      if (out.kind === 'empty') {
+        setMsg({ k: 'err', t: 'The designer finished without a usable agent definition — describe the agents and what they should do more concretely.' });
+        return;
+      }
+      const def = toCanvasDef(out.def);
+      if (!def.crews.length) { setMsg({ k: 'err', t: 'The designer returned no agents.' }); return; }
       loadFromDef(def);
-      if (j.code && !code) setCode(j.code);
-      if (j.display_name && !displayName) setDisplayName(j.display_name);
+      if (def.profile) setCode((c) => c || String(def.profile));
+      if (def.display_name) setDisplayName((d) => d || String(def.display_name));
+      if (def.description) setDescription((d) => d || String(def.description));
       setMsg({ k: 'ok', t: `Generated ${def.crews.length} agent(s) — review on the canvas, then Save/Publish.` });
-    } catch (e: any) { setMsg({ k: 'err', t: `Generate failed: ${e.message}` }); }
-    finally { setGen(false); }
+    } catch (e) {
+      setMsg({ k: 'err', t: e instanceof AgentStudioError ? `Designer agent error: ${e.message}` : 'The designer agent could not be reached.' });
+    } finally { setGen(false); setGenPhase(null); }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const generate = async () => {
+    const prompt = nlPrompt.trim();
+    if (!prompt) { setMsg({ k: 'err', t: 'Describe the agent/team you want.' }); return; }
+    setGen(true); setNeeds(null); setMsg(null); setGenPhase('Starting the designer agent…');
+    let eid: string | undefined;
+    try {
+      // The current graph goes along as current_spec so the designer EDITS it instead of
+      // starting over; an empty canvas sends {}. The approach is a preference in the goal text.
+      const goal = `${prompt}\n\nPreferred orchestration: ${APPROACH_HINT[approach]}.`;
+      const currentSpec = nodes.length ? JSON.stringify(agentDef) : '{}';
+      eid = (await startAgentDesignerRun(goal, currentSpec))?.executionId;
+    } catch (e) {
+      const t = e instanceof AgentStudioError && e.status === 501
+        ? 'AI generation is not configured on this host (agent designer profile missing).'
+        : e instanceof AgentStudioError ? `Designer agent error: ${e.message}` : 'The designer agent could not be reached.';
+      setMsg({ k: 'err', t }); setGen(false); setGenPhase(null); return;
+    }
+    if (!eid) { setMsg({ k: 'err', t: 'The designer agent did not start.' }); setGen(false); setGenPhase(null); return; }
+    storeRun(RUN_CTX, { executionId: eid, prompt, startedAt: Date.now() });   // remember BEFORE waiting
+    await followRun(eid);
   };
+
+  // Resume on mount: a recent stored run (still running or already finished) is picked up again.
+  const followRunRef = useRef(followRun);
+  followRunRef.current = followRun;
+  useEffect(() => {
+    const stored = readStoredRun(RUN_CTX);
+    if (!stored) return;
+    if (Date.now() - stored.startedAt > RUN_MAX_AGE_MS) { clearStoredRun(RUN_CTX); return; }
+    setNlPrompt((t) => t || stored.prompt);
+    followRunRef.current(stored.executionId);
+  }, []);
 
   const onConnect = useCallback((c: Connection) => setEdges((es) => addEdge({ ...c, animated: approach === 'loop' }, es)), [approach, setEdges]);
   const patch = (id: string, p: Partial<NodeData>) =>
@@ -327,7 +420,15 @@ function Canvas({ chatSlot }: { chatSlot?: ReactNode }) {
                 <button onClick={generate} disabled={gen} className="mt-2 w-full inline-flex items-center justify-center gap-1.5 rounded-md bg-indigo-600 text-white py-1.5 disabled:opacity-60">
                   {gen ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />} Generate the graph
                 </button>
-                <p className="mt-1 text-[11px] text-slate-500">Generates agents + connections on the canvas. Review and edit, then Save/Publish.</p>
+                {genPhase && <p className="mt-1 text-[11px] text-indigo-700">{genPhase}</p>}
+                {needs && (
+                  <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">
+                    <div className="font-semibold mb-0.5">The designer needs more detail</div>
+                    <div className="whitespace-pre-wrap">{needs}</div>
+                    <div className="mt-1 text-amber-700">Add it to the description above and generate again.</div>
+                  </div>
+                )}
+                <p className="mt-1 text-[11px] text-slate-500">An AI designer agent models the agents + connections on the canvas (it edits the current graph if there is one). Review and edit, then Save/Publish.</p>
               </div>
               <p className="mb-2">Or build by hand: add agents from the palette, drag to connect them (edge = flow). Click a node to edit it.</p>
               <p>Entry node is flagged 🚩. The graph below is saved as <code>agent_definition</code>.</p>

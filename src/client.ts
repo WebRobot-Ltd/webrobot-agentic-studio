@@ -71,10 +71,6 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
   return j as T;
 }
 
-// Generate an agent_definition from a natural-language description.
-export const generateAgents = (description: string, approach: string) =>
-  call<any>('POST', '/api/agents/generate', { description, approach });
-
 // Agent template persistence (the listing that carries agent_definition).
 export const createAgentTemplate = (body: unknown) =>
   call<any>('POST', '/api/admin/agent-templates', body);
