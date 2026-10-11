@@ -600,8 +600,8 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
   const removeTool = (i: number) => setLocalTools((ts) => ts.filter((_, j) => j !== i));
 
   return (
-    <div className="max-w-4xl mx-auto px-2 py-6 text-slate-900">
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-brand-600 via-violet-600 to-indigo-700 px-6 py-7 text-white shadow-lg mb-6">
+    <div className="w-full px-2 py-6 text-slate-900">
+      <div className="relative overflow-hidden rounded-lg bg-brand-600 px-6 py-7 text-white shadow-sm mb-6">
         <div className="absolute -right-6 -top-6 opacity-15"><Bot className="h-40 w-40" /></div>
         <div className="relative">
           <div className="flex items-center gap-2 flex-wrap">
@@ -610,7 +610,7 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
             {isTeam && <span className="inline-flex items-center gap-1 rounded-full bg-white/20 px-2 py-0.5 text-xs"><Users className="h-3 w-3" /> Team</span>}
             <span className="ml-auto text-xs text-white/80">status: <b className="text-white">{status}</b>{savedId ? ` · id ${savedId}` : ''}</span>
           </div>
-          <p className="mt-2 text-sm text-white/85 max-w-2xl">Compose an agent profile or a persistent multi-agent team — engines, prompts, declared variables, inline tools, orchestration and pricing — then publish to the marketplace (draft → submit → admin approval).</p>
+          <p className="mt-2 text-sm text-white/85 max-w-3xl">Compose an agent profile or a persistent multi-agent team — engines, prompts, declared variables, inline tools, orchestration and pricing — then publish to the marketplace (draft → submit → admin approval).</p>
         </div>
       </div>
 
