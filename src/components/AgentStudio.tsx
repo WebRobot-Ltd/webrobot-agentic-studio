@@ -585,12 +585,12 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
           una riga (l'agente progettista webrobot-agent-designer propone) o conversare (chatSlot) — in una
           sola testata. Prima erano una fascia blu e, sotto, un riquadro "Start here": il nuovo utente
           leggeva due intestazioni prima di trovare il campo. Il form tecnico resta sotto, invariato. */}
-      <section className="relative mb-6 overflow-hidden rounded-2xl bg-gradient-to-br from-[#151b74] via-[#13306e] to-[#1f4fbf] p-6 text-white shadow-lg sm:p-8">
-        <div aria-hidden="true" className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-[#5eead4]/20 blur-3xl" />
+      <section className="relative mb-6 overflow-hidden rounded-2xl bg-gradient-to-br from-brand-950 via-brand-900 to-brand-700 p-6 text-white shadow-lg sm:p-8">
+        <div aria-hidden="true" className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-brand-400/25 blur-3xl" />
         <div className="absolute -right-8 -top-10 opacity-10" aria-hidden="true"><Bot className="h-40 w-40" /></div>
         <div className="relative">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-white/20 bg-white/10 px-2.5 py-0.5 text-xs font-semibold text-[#5eead4]">
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-white/20 bg-white/10 px-2.5 py-0.5 text-xs font-semibold text-brand-200">
               <Bot className="h-3.5 w-3.5" /> Agent Studio
             </span>
             {isTeam && <span className="inline-flex items-center gap-1 rounded-full bg-white/15 px-2 py-0.5 text-xs"><Users className="h-3 w-3" /> Team</span>}
@@ -617,7 +617,7 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
               type="button"
               onClick={askForAgent}
               disabled={generating || !askText.trim()}
-              className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-[#151b74] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#0d1150] disabled:opacity-50"
+              className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-brand-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-brand-950 disabled:opacity-50"
               title="Design an agent from this description — you review it before anything changes"
             >
               {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
@@ -640,7 +640,7 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
                     className="rounded-xl border border-white/15 bg-white/[0.07] p-3 text-left text-sm text-blue-50 transition hover:border-white/40 hover:bg-white/[0.14]"
                   >
                     {ex}
-                    <span className="mt-2 block text-xs font-semibold text-[#5eead4]">Use this →</span>
+                    <span className="mt-2 block text-xs font-semibold text-brand-200">Use this →</span>
                   </button>
                 ))}
               </div>
