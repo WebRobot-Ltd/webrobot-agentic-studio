@@ -119,6 +119,13 @@ function OrchestrationGraph({ crews, entry, edges }: { crews: Crew[]; entry: str
   );
 }
 
+/** Esempi della testata: forme reali di agenti che la piattaforma esegue (monitoraggio, sentiment, prezzi). */
+const AGENT_EXAMPLES = [
+  'A research agent that monitors a topic daily and emails a digest',
+  'A sentiment agent that scores news and forum posts about a brand every morning',
+  'A team that tracks product prices on shops and alerts me when a competitor undercuts',
+];
+
 function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: AgentStudioProps) {
   const [code, setCode] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -574,59 +581,73 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
 
   return (
     <div className="w-full px-2 py-6 text-slate-900">
-      <div className="relative overflow-hidden rounded-lg bg-brand-600 px-6 py-7 text-white shadow-sm mb-6">
-        <div className="absolute -right-6 -top-6 opacity-15"><Bot className="h-40 w-40" /></div>
+      {/* HERO (restyling 10-22, stile Databricks / Snowflake): titolo e le due VIE FACILI — descrivere in
+          una riga (l'agente progettista webrobot-agent-designer propone) o conversare (chatSlot) — in una
+          sola testata. Prima erano una fascia blu e, sotto, un riquadro "Start here": il nuovo utente
+          leggeva due intestazioni prima di trovare il campo. Il form tecnico resta sotto, invariato. */}
+      <section className="relative mb-6 overflow-hidden rounded-2xl bg-gradient-to-br from-[#151b74] via-[#13306e] to-[#1f4fbf] p-6 text-white shadow-lg sm:p-8">
+        <div aria-hidden="true" className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-[#5eead4]/20 blur-3xl" />
+        <div className="absolute -right-6 -bottom-8 opacity-10" aria-hidden="true"><Bot className="h-48 w-48" /></div>
         <div className="relative">
-          <div className="flex items-center gap-2 flex-wrap">
-            <div className="rounded-lg bg-white/15 p-2 backdrop-blur"><Bot className="h-6 w-6" /></div>
-            <h1 className="text-2xl font-semibold tracking-tight">Agent Studio</h1>
-            {isTeam && <span className="inline-flex items-center gap-1 rounded-full bg-white/20 px-2 py-0.5 text-xs"><Users className="h-3 w-3" /> Team</span>}
-            <span className="ml-auto text-xs text-white/80">status: <b className="text-white">{status}</b>{savedId ? ` · id ${savedId}` : ''}</span>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-white/20 bg-white/10 px-2.5 py-0.5 text-xs font-semibold text-[#5eead4]">
+              <Bot className="h-3.5 w-3.5" /> Agent Studio
+            </span>
+            {isTeam && <span className="inline-flex items-center gap-1 rounded-full bg-white/15 px-2 py-0.5 text-xs"><Users className="h-3 w-3" /> Team</span>}
+            <span className="ml-auto text-xs text-white/75">status: <b className="text-white">{status}</b>{savedId ? ` · id ${savedId}` : ''}</span>
           </div>
-          <p className="mt-2 text-sm text-white/85 max-w-3xl">Compose an agent profile or a persistent multi-agent team — engines, prompts, declared variables, inline tools, orchestration and pricing — then publish to the marketplace (draft → submit → admin approval).</p>
-        </div>
-      </div>
-
-      {/* Le due VIE FACILI — descrivere in una riga (l'agente progetta e propone) o conversare —
-          erano assenti/sepolte: il nuovo utente atterrava su un form tecnico da "Code (kebab-case)".
-          Qui in CIMA: la riga "Propose" avvia il progettista agentico (webrobot-agent-designer),
-          come il pipeline designer; il chatSlot resta l'alternativa conversazionale, reso una sola
-          volta (tolto dal fondo). Per un profilo nuovo la cornice nomina le vie; in modifica e' piu'
-          leggera. Solo nel designer pieno (non embedded, dove l'host possiede il form). */}
-      {(
-        <div className="mb-5 rounded-xl border border-indigo-200 bg-indigo-50 p-4">
-          <p className="text-sm text-indigo-900">
+          <h1 className="mt-3 text-2xl font-extrabold tracking-tight sm:text-3xl">
+            {editId ? 'Describe a change. The assistant redesigns your agent.' : 'Describe your agent. The assistant designs it.'}
+          </h1>
+          <p className="mt-2 max-w-3xl text-sm text-blue-100 sm:text-base">
             {editId
               ? 'Describe a change and the assistant redesigns this agent — or edit the form below.'
-              : 'Start here: describe the agent — or the team — you want and the assistant designs it for you, ready to review and tweak below. Prefer to build it by hand? Fill in the form.'}
+              : 'Describe the agent — or the team — you want and the assistant designs it for you, ready to review and tweak below. Prefer to build it by hand? Fill in the form.'}
           </p>
-          <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center">
-            <div className="flex flex-1 items-center gap-2">
-              <input
-                className="flex-1 rounded-md border border-indigo-200 px-3 py-2 text-sm"
-                placeholder="Describe the agent or team — e.g. “a research agent that monitors a topic daily and emails a digest”"
-                value={askText}
-                onChange={(e) => setAskText(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') askForAgent(); }}
-                disabled={generating}
-              />
-              <button
-                type="button"
-                onClick={askForAgent}
-                disabled={generating || !askText.trim()}
-                className="inline-flex items-center gap-1 rounded-md bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-                title="Design an agent from this description — you review it before anything changes"
-              >
-                {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-                {generating ? 'Designing…' : 'Propose'}
-              </button>
-            </div>
-            {chatSlot && <div className="shrink-0">{chatSlot}</div>}
+          <div className="mt-5 flex flex-col gap-2 rounded-xl bg-white p-2 shadow-xl shadow-black/20 sm:flex-row sm:items-center">
+            <input
+              className="min-w-0 flex-1 rounded-lg border-0 px-3 py-3 text-base text-slate-900 outline-none placeholder:text-slate-400"
+              placeholder="Describe the agent or team — e.g. “a research agent that monitors a topic daily and emails a digest”"
+              value={askText}
+              onChange={(e) => setAskText(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') askForAgent(); }}
+              disabled={generating}
+            />
+            <button
+              type="button"
+              onClick={askForAgent}
+              disabled={generating || !askText.trim()}
+              className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-[#151b74] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#0d1150] disabled:opacity-50"
+              title="Design an agent from this description — you review it before anything changes"
+            >
+              {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+              {generating ? 'Designing…' : 'Propose'}
+            </button>
           </div>
-          {askPhase && !askErr && <p className="mt-2 text-xs text-indigo-700">{askPhase}</p>}
-          {askErr && <p className="mt-2 text-xs text-rose-600">{askErr}</p>}
+          {chatSlot && <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-blue-100">or {chatSlot}</div>}
+          {askPhase && !askErr && <p className="mt-2 text-xs text-blue-100">{askPhase}</p>}
+          {askErr && <p className="mt-2 rounded-md bg-rose-50 px-2 py-1 text-xs text-rose-700">{askErr}</p>}
+          {/* Partenze concrete solo per un profilo nuovo e finche' il campo e' vuoto. */}
+          {!editId && !askText.trim() && !generating && !proposal && (
+            <div className="mt-6">
+              <p className="text-xs font-semibold uppercase tracking-wider text-blue-200">Start from an example</p>
+              <div className="mt-2 grid gap-3 sm:grid-cols-3">
+                {AGENT_EXAMPLES.map((ex) => (
+                  <button
+                    key={ex}
+                    type="button"
+                    onClick={() => setAskText(ex)}
+                    className="rounded-xl border border-white/15 bg-white/[0.07] p-3 text-left text-sm text-blue-50 transition hover:border-white/40 hover:bg-white/[0.14]"
+                  >
+                    {ex}
+                    <span className="mt-2 block text-xs font-semibold text-[#5eead4]">Use this →</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
-      )}
+      </section>
 
       {/* La proposta dell'agente progettista: non applicata da sola, si vede e si decide. */}
       {proposal && (
