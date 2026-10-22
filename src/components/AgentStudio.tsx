@@ -587,7 +587,7 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
           leggeva due intestazioni prima di trovare il campo. Il form tecnico resta sotto, invariato. */}
       <section className="relative mb-6 overflow-hidden rounded-2xl bg-gradient-to-br from-[#151b74] via-[#13306e] to-[#1f4fbf] p-6 text-white shadow-lg sm:p-8">
         <div aria-hidden="true" className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-[#5eead4]/20 blur-3xl" />
-        <div className="absolute -right-6 -bottom-8 opacity-10" aria-hidden="true"><Bot className="h-48 w-48" /></div>
+        <div className="absolute -right-8 -top-10 opacity-10" aria-hidden="true"><Bot className="h-40 w-40" /></div>
         <div className="relative">
           <div className="flex flex-wrap items-center gap-2">
             <span className="inline-flex items-center gap-1.5 rounded-full border border-white/20 bg-white/10 px-2.5 py-0.5 text-xs font-semibold text-[#5eead4]">
