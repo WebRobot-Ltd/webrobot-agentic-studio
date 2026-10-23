@@ -684,7 +684,7 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
       setIntgMsg((m) => ({ ...m, [k]: e instanceof AgentStudioError ? `save → ${e.status}` : 'save failed' }));
     }
   };
-  const addCrew = () => setCrews((cs) => [...cs, { id: `agent${cs.length + 1}`, engine: 'agent_sdk', model: 'claude-sonnet-4-5', system_prompt: '', mcp_url: '', permission_mode: '', disallowed_tools: '', max_turns: '', max_budget_usd: '' }]);
+  const addCrew = () => setCrews((cs) => [...cs, { id: `agent${cs.length + 1}`, engine: 'agent_sdk', model: 'claude-sonnet-5-5', system_prompt: '', mcp_url: '', permission_mode: '', disallowed_tools: '', max_turns: '', max_budget_usd: '' }]);
   const removeCrew = (i: number) => setCrews((cs) => cs.filter((_, j) => j !== i));
 
   const setVar = (i: number, patch: Partial<VarDecl>) =>
@@ -873,6 +873,17 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
             </div>
           )}
         </div>
+        {/* Two definition modes (10-23): the FORM (sections) and the GRAPH of the team (chain or swarm). */}
+        <div className="inline-flex rounded-lg border border-slate-300 bg-white p-0.5 text-sm" role="tablist" aria-label="Definition mode">
+          {([['form', 'Form'], ['graph', 'Graph']] as const).map(([k, l]) => {
+            const on = k === 'graph' ? section === 'team' : section !== 'team';
+            return (
+              <button key={k} type="button" role="tab" aria-selected={on}
+                onClick={() => setSection(k === 'graph' ? 'team' : 'agents')}
+                className={`rounded-md px-3 py-1.5 font-medium ${on ? 'bg-brand-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>{l}</button>
+            );
+          })}
+        </div>
         <button onClick={() => setTestOpen((v) => !v)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
           <MessageSquare className="h-4 w-4" /> {testOpen ? 'Hide test' : 'Test'}
         </button>
@@ -887,7 +898,7 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
 
       <div className={`grid gap-4 ${testOpen ? 'lg:grid-cols-[210px_minmax(0,1fr)_400px]' : 'lg:grid-cols-[210px_minmax(0,1fr)]'}`}>
         <nav className="space-y-1 lg:sticky lg:top-20 lg:self-start">
-          {SECTIONS.filter((x) => x.key !== 'team' || isTeam).map((x) => (
+          {SECTIONS.map((x) => (
             <button key={x.key} type="button" onClick={() => setSection(x.key)}
               className={`flex w-full items-start gap-2.5 rounded-lg px-3 py-2 text-left transition ${section === x.key ? 'bg-brand-50 text-brand-900 ring-1 ring-brand-200' : 'text-slate-700 hover:bg-slate-100'}`}>
               <x.icon className={`mt-0.5 h-4 w-4 shrink-0 ${section === x.key ? 'text-brand-600' : 'text-slate-400'}`} />
@@ -1027,6 +1038,22 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
 
           </>)}
           {section === 'team' && (<>
+            {!isTeam && (
+              <section className="rounded-xl border border-slate-200 bg-white p-6 text-center shadow-sm">
+                <Network className="mx-auto h-8 w-8 text-brand-500" />
+                <h2 className="mt-2 text-lg font-semibold text-slate-900">This is a single agent</h2>
+                <p className="mx-auto mt-1 max-w-lg text-sm text-slate-600">
+                  The graph shows how several agents work together — a chain of hand-offs, or a swarm sharing a workspace.
+                  Make it a team to draw it{crews.length < 2 ? ', then add agents in the Agents section' : ''}.
+                </p>
+                <div className="mt-4 flex justify-center gap-2">
+                  <button type="button" onClick={() => setMode('team')} className="rounded-lg bg-brand-900 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-950">Make it a team</button>
+                  {crews.length < 2 && (
+                    <button type="button" onClick={() => { setMode('team'); addCrew(); }} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Make it a team and add an agent</button>
+                  )}
+                </div>
+              </section>
+            )}
             {/* Orchestration (teams only) — edge editor + visual graph */}
             {isTeam && (
               <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
