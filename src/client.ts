@@ -83,6 +83,12 @@ export const submitAgentTemplate = (id: string) =>
 export const listAgenticProfiles = () => call<any>('GET', '/api/admin/agentic/profiles');
 export const getAgenticProfile = (id: string) =>
   call<any>('GET', `/api/admin/agentic/profiles/${encodeURIComponent(id)}`);
+/** Earlier versions of a profile, newest first, each with its spec (JSON text). */
+export interface ProfileVersion { id: number; version?: string; name?: string; description?: string; surface?: string; spec?: string; savedAt?: string; savedBy?: string }
+export const getAgenticProfileVersions = async (id: string): Promise<ProfileVersion[]> => {
+  const j = await call<any>('GET', `/api/admin/agentic/profiles/${encodeURIComponent(id)}/versions`);
+  return Array.isArray(j?.versions) ? j.versions : [];
+};
 export const saveAgenticProfile = (body: unknown, id?: string) =>
   id
     ? call<any>('PUT', `/api/admin/agentic/profiles/${encodeURIComponent(id)}`, body)

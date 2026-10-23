@@ -17,7 +17,7 @@
 //   · `editId` is a prop (was read from Next's useSearchParams).
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Bot, Plus, Trash2, Loader2, Save, Send, Users, Variable, Wrench, Tag, Sparkles, MessageSquare, Info, Network, LineChart, Code2 } from 'lucide-react';
+import { Bot, Plus, Trash2, Loader2, Save, Send, Users, Variable, Wrench, Tag, Sparkles, MessageSquare, Info, Network, LineChart, Code2, History } from 'lucide-react';
 import TestPanel from './TestPanel';
 import { ReactFlow, Background, Controls, type Node, type Edge as FlowEdge } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
@@ -27,6 +27,7 @@ import {
   startAgentDesignerRun, extractAgentDefinition, AgentStudioError,
   getMcpIntegrations, mcpAuthHeader, saveMcpCredential, type McpIntegration,
   getAgentProfileDraft, deleteAgentProfileDraft,
+  getAgenticProfileVersions, type ProfileVersion,
 } from '../client';
 import {
   readStoredRun as leggiRun, storeRun as salvaRun, clearStoredRun as scartaRun,
@@ -271,6 +272,14 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
   // The spec as last saved/loaded: the test panel runs the SAVED profile, so it warns on unsaved edits.
   const [savedSpec, setSavedSpec] = useState<string | null>(null);
   const markSaved = useRef(false);
+  const [versions, setVersions] = useState<ProfileVersion[] | null>(null);
+  const [versionsOpen, setVersionsOpen] = useState(false);
+  const openVersions = async () => {
+    if (versionsOpen) { setVersionsOpen(false); return; }
+    setVersionsOpen(true); setVersions(null);
+    try { setVersions(savedId != null ? await getAgenticProfileVersions(String(savedId)) : []); }
+    catch { setVersions([]); }
+  };
 
   // Ramo "descrivi il team -> l'agente lo progetta" (parita' col pipeline designer).
   const [askText, setAskText] = useState('');
@@ -805,6 +814,38 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
         {isTeam && <span className="inline-flex items-center gap-1 rounded-full bg-brand-50 px-2 py-0.5 text-xs font-medium text-brand-700"><Users className="h-3 w-3" /> Team · {crews.length}</span>}
         {dirty && <span className="text-xs text-slate-500">unsaved changes</span>}
         <span className="flex-1" />
+        <div className="relative">
+          <button onClick={openVersions} disabled={savedId == null} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            title={savedId == null ? 'Save the agent to start its history' : 'Earlier versions of this agent'}>
+            <History className="h-4 w-4" /> Versions
+          </button>
+          {versionsOpen && (
+            <div className="absolute right-0 z-20 mt-2 w-96 rounded-xl border border-slate-200 bg-white p-2 shadow-xl">
+              {versions == null && <p className="flex items-center gap-2 p-2 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" /> Loading…</p>}
+              {versions && versions.length === 0 && <p className="p-2 text-sm text-slate-500">No earlier versions yet — every save from now on keeps the one it replaces.</p>}
+              {versions && versions.length > 0 && (
+                <ul className="max-h-80 space-y-1 overflow-y-auto">
+                  {versions.map((v) => (
+                    <li key={v.id} className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-slate-50">
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-sm font-medium text-slate-900">v{v.version || '?'} <span className="font-normal text-slate-500">· {v.savedAt ? new Date(v.savedAt).toLocaleString() : ''}</span></span>
+                        <span className="block truncate text-xs text-slate-500">{v.description || v.name}</span>
+                      </span>
+                      <button type="button" className="rounded-md border border-slate-300 px-2 py-1 text-xs font-medium hover:bg-white"
+                        onClick={() => {
+                          try {
+                            applySpec(JSON.parse(v.spec || '{}'), { name: v.name, version: v.version, description: v.description, surface: v.surface });
+                            setVersionsOpen(false);
+                            setMsg({ kind: 'ok', text: `Version ${v.version || ''} loaded into the form — Save to make it current.` });
+                          } catch { setMsg({ kind: 'err', text: 'That version could not be read.' }); }
+                        }}>Load</button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
         <button onClick={() => setTestOpen((v) => !v)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
           <MessageSquare className="h-4 w-4" /> {testOpen ? 'Hide test' : 'Test'}
         </button>
