@@ -58,6 +58,33 @@ const CATEGORIES = [
 
 // Il run del progettista (RayJob asincrono) si ricorda/riprende via ../agentDesignerRun.
 const ENGINES = ['agent_sdk', 'crewai', 'autogen'];
+// Models each framework can actually run (agentic-runtime actors): agent_sdk = Claude only; autogen =
+// Claude native or gpt-oss on the OpenAI-compatible endpoint (Groq); crewai = LiteLLM ids written to
+// llm_default, '' = the model served inside the job (HPC local inference).
+const MODELS_BY_ENGINE: Record<string, { id: string; label: string }[]> = {
+  agent_sdk: [
+    { id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5 — balanced (default)' },
+    { id: 'claude-opus-5-5', label: 'Claude Opus 5.5 — hardest tasks' },
+    { id: 'claude-haiku-5-5', label: 'Claude Haiku 5.5 — fast, cheap' },
+    { id: 'claude-fable-5-1', label: 'Claude Fable 5.1' },
+  ],
+  autogen: [
+    { id: 'claude-sonnet-5-5', label: 'Claude Sonnet 5.5' },
+    { id: 'claude-opus-5-5', label: 'Claude Opus 5.5' },
+    { id: 'claude-haiku-5-5', label: 'Claude Haiku 5.5' },
+    { id: 'openai/gpt-oss-120b', label: 'gpt-oss-120b (open, Groq)' },
+    { id: 'openai/gpt-oss-20b', label: 'gpt-oss-20b (open, Groq)' },
+  ],
+  crewai: [
+    { id: '', label: 'Model served in the job (HPC local inference)' },
+    { id: 'anthropic/claude-sonnet-5-5', label: 'Claude Sonnet 5.5' },
+    { id: 'anthropic/claude-opus-5-5', label: 'Claude Opus 5.5' },
+    { id: 'anthropic/claude-haiku-5-5', label: 'Claude Haiku 5.5' },
+    { id: 'groq/openai/gpt-oss-120b', label: 'gpt-oss-120b (open, Groq)' },
+    { id: 'groq/openai/gpt-oss-20b', label: 'gpt-oss-20b (open, Groq)' },
+  ],
+};
+const defaultModelFor = (engine: string) => (MODELS_BY_ENGINE[engine] || MODELS_BY_ENGINE.agent_sdk)[0].id;
 const PRICE_UNITS = ['free', 'flat', 'subscription_monthly', 'subscription_yearly'];
 const BINDS = ['env', 'prompt', 'both'];
 // Trading layer (increment 1): a strategy is an AGENT; these fields make it a trading bot.
@@ -207,7 +234,7 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
   const [category, setCategory] = useState('data_engineer');
   const [tags, setTags] = useState('');
   const [crews, setCrews] = useState<Crew[]>([
-    { id: 'agent', engine: 'agent_sdk', model: 'claude-sonnet-4-5', system_prompt: 'You are a helpful WebRobot agent.', mcp: [{ ...WEBROBOT_MCP }], permission_mode: '', disallowed_tools: '', max_turns: '', max_budget_usd: '' },
+    { id: 'agent', engine: 'agent_sdk', model: 'claude-sonnet-5-5', system_prompt: 'You are a helpful WebRobot agent.', mcp: [{ ...WEBROBOT_MCP }], permission_mode: '', disallowed_tools: '', max_turns: '', max_budget_usd: '' },
   ]);
   const [entry, setEntry] = useState('agent');
   const [edges, setEdges] = useState<Edge[]>([]);
@@ -326,7 +353,8 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
     setVersion(meta?.version || def.version || '1.0.0');
     setDescription(meta?.description || def.description || '');
     const cs: Crew[] = (def.crews || []).map((c: any) => ({
-      id: c.id || 'agent', engine: c.engine || 'agent_sdk', model: c.model || 'claude-sonnet-4-5',
+      id: c.id || 'agent', engine: c.engine || 'agent_sdk',
+      model: (c.engine || '').toLowerCase() === 'crewai' ? (c.llm_default || c.model || '') : (c.model || 'claude-sonnet-5-5'),
       system_prompt: c.system_prompt || '', mcp: Array.isArray(c.mcp_servers) ? c.mcp_servers.map((m: any) => ({ ...m })) : [],
       permission_mode: c.permission_mode || '',
       disallowed_tools: Array.isArray(c.disallowed_tools) ? c.disallowed_tools.join(', ') : (c.disallowed_tools || ''),
@@ -412,7 +440,10 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
         // Start from the ORIGINAL crew → every field the form doesn't surface
         // (auth, goal_template, extra mcp_servers, …) is preserved across the save.
         const out: any = { ...(c._raw || {}) };
-        out.id = c.id; out.engine = c.engine; out.model = c.model; out.system_prompt = c.system_prompt;
+        out.id = c.id; out.engine = c.engine; out.system_prompt = c.system_prompt;
+        // crewai reads llm_default (LiteLLM id), not model; empty = the job's local model
+        if (c.engine === 'crewai') { delete out.model; if (c.model) out.llm_default = c.model; else delete out.llm_default; }
+        else { out.model = c.model; }
         // MCP: the form edits the whole list (empty url rows are dropped).
         const servers = c.mcp.filter((m) => (m.url || '').trim()).map((m) => ({ type: 'http', allow: 'all', ...m, url: m.url.trim() }));
         if (servers.length) out.mcp_servers = servers; else delete out.mcp_servers;
@@ -958,8 +989,11 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
                     </p>
                     <div className="flex items-center gap-2 mb-2">
                       <input className={inp + ' max-w-[140px]'} value={c.id} onChange={(e) => setCrew(i, { id: e.target.value })} placeholder="id" title="Short unique name for this agent (e.g. researcher)" />
-                      <select className={inp + ' max-w-[130px]'} value={c.engine} onChange={(e) => setCrew(i, { engine: e.target.value })}>{ENGINES.map((en) => <option key={en} value={en}>{en}</option>)}</select>
-                      <input className={inp} value={c.model} onChange={(e) => setCrew(i, { model: e.target.value })} placeholder="model" />
+                      <select className={inp + ' max-w-[130px]'} value={c.engine} title="Agent framework" onChange={(e) => { const en = e.target.value; const ok = (MODELS_BY_ENGINE[en] || []).some((m) => m.id === c.model); setCrew(i, ok ? { engine: en } : { engine: en, model: defaultModelFor(en) }); }}>{ENGINES.map((en) => <option key={en} value={en}>{en}</option>)}</select>
+                      <select className={inp} value={c.model} title="Models this framework can run" onChange={(e) => setCrew(i, { model: e.target.value })}>
+                        {(MODELS_BY_ENGINE[c.engine] || MODELS_BY_ENGINE.agent_sdk).map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+                        {!(MODELS_BY_ENGINE[c.engine] || []).some((m) => m.id === c.model) && <option value={c.model}>{c.model} (current, not in the list)</option>}
+                      </select>
                       {crews.length > 1 && <button onClick={() => removeCrew(i)} className="text-slate-400 hover:text-red-600"><Trash2 className="h-4 w-4" /></button>}
                     </div>
                     <textarea className={inp + ' h-16 mb-2'} value={c.system_prompt} onChange={(e) => setCrew(i, { system_prompt: e.target.value })} placeholder="system prompt (use {{variable}} to inject declared variables)" />
