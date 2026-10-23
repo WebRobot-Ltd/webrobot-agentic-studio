@@ -219,7 +219,7 @@ function OrchestrationGraph({ crews, entry, edges, onConnectEdge, onRemoveEdge, 
           const item = 'block w-full px-3 py-1.5 text-left text-sm text-slate-700 hover:bg-slate-100 disabled:opacity-40 disabled:hover:bg-transparent';
           const go = (f: () => void) => () => { setMenu(null); f(); };
           return (
-            <div className="absolute z-20 min-w-[190px] rounded-lg border border-slate-200 bg-white py-1 shadow-lg"
+            <div className="wr-noprint absolute z-20 min-w-[190px] rounded-lg border border-slate-200 bg-white py-1 shadow-lg"
               style={{ left: menu.x, top: menu.y }} onContextMenu={(e) => e.preventDefault()}>
               {menu.id ? (<>
                 <div className="truncate border-b border-slate-100 px-3 pb-1.5 pt-1 font-mono text-xs font-semibold text-slate-500">{menu.id}</div>
@@ -254,8 +254,10 @@ function OrchestrationGraph({ crews, entry, edges, onConnectEdge, onRemoveEdge, 
             .wr-graph-print, .wr-graph-print * { visibility: visible !important; }
             .wr-graph-print { position: absolute !important; inset: 0 !important; }
             .wr-graph-print .wr-noprint, .wr-graph-print .react-flow__controls { display: none !important; }
+            /* PDF = the canvas only, filling the page */
+            .wr-graph-print .wr-print-canvas, .wr-graph-print .wr-print-canvas > div { height: 180mm !important; width: 100% !important; border: none !important; }
           }`}</style>
-          <div className="mb-3 flex items-center gap-3">
+          <div className="wr-noprint mb-3 flex items-center gap-3">
             <h3 className="text-base font-semibold text-slate-800">Team graph</h3>
             <span className="flex-1" />
             <button type="button" onClick={() => window.print()} title="Print the graph, or save it as PDF from the print dialog"
@@ -263,7 +265,7 @@ function OrchestrationGraph({ crews, entry, edges, onConnectEdge, onRemoveEdge, 
             <button type="button" onClick={() => setFull(false)} title="Close (Esc)"
               className="wr-noprint rounded-lg border border-slate-200 px-3 py-1 text-sm font-medium text-slate-700 hover:bg-slate-50">✕ Close</button>
           </div>
-          <div className="min-h-0 flex-1">{canvas('calc(100vh - 90px)')}</div>
+          <div className="wr-print-canvas min-h-0 flex-1">{canvas('calc(100vh - 90px)')}</div>
         </div>
       )}
       {editable && (
