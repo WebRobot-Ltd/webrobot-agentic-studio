@@ -141,13 +141,24 @@ export interface AgentStudioProps {
 }
 
 // Module-scope so React Flow + the form inputs don't remount on each render.
-function OrchestrationGraph({ crews, entry, edges, onConnectEdge, onRemoveEdge, onSetEntry, onOpenAgent }: {
+function OrchestrationGraph({ crews, entry, edges, onConnectEdge, onRemoveEdge, onSetEntry, onOpenAgent, onAddAgent, onRemoveAgent, onDuplicateAgent }: {
   crews: Crew[]; entry: string; edges: Edge[];
   onConnectEdge?: (from: string, to: string) => void;
   onRemoveEdge?: (from: string, to: string) => void;
   onSetEntry?: (id: string) => void;
   onOpenAgent?: (id: string) => void;
+  onAddAgent?: () => void;
+  onRemoveAgent?: (id: string) => void;
+  onDuplicateAgent?: (id: string) => void;
 }) {
+  const [full, setFull] = useState(false);                                   // full-screen view
+  const [menu, setMenu] = useState<{ id: string | null; x: number; y: number } | null>(null);   // right-click
+  useEffect(() => {
+    if (!full) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setFull(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [full]);
   // EDITABLE team graph (redesign 10-23, after CrewAI Crew Studio): drag from one agent to another to add a
   // hand-off, double-click an arrow to remove it, click an agent to make it the entry, double-click to open
   // its settings. Positions are kept while the page is open; the spec stores only the edges.
@@ -181,9 +192,8 @@ function OrchestrationGraph({ crews, entry, edges, onConnectEdge, onRemoveEdge, 
     .filter((x) => x.from && x.to)
     .map((x, i) => ({ id: `e${i}-${x.from}-${x.to}`, source: x.from, target: x.to, animated: true, data: { from: x.from, to: x.to } }));
   const editable = !!onConnectEdge;
-  return (
-    <div>
-      <div style={{ height: 420 }} className="rounded-lg border border-slate-200 bg-slate-50">
+  const canvas = (h: number | string) => (
+      <div style={{ height: h }} className="relative rounded-lg border border-slate-200 bg-slate-50">
         <ReactFlow
           nodes={nodes} edges={fedges} fitView proOptions={{ hideAttribution: true }}
           nodesDraggable nodesConnectable={editable} elementsSelectable={editable}
@@ -194,12 +204,68 @@ function OrchestrationGraph({ crews, entry, edges, onConnectEdge, onRemoveEdge, 
           onEdgeDoubleClick={(_, e) => onRemoveEdge?.(String(e.source), String(e.target))}
           onNodeClick={(_, n) => setSelected(String(n.id))}
           onNodeDoubleClick={(_, n) => onOpenAgent?.(String(n.id))}
-          onPaneClick={() => setSelected(null)}
+          onPaneClick={() => { setSelected(null); setMenu(null); }}
+          onMoveStart={() => setMenu(null)}
+          deleteKeyCode={editable && onRemoveAgent ? ['Delete', 'Backspace'] : null}
+          onNodesDelete={(del) => { if (crews.length > del.length) del.forEach((n) => onRemoveAgent?.(String(n.id))); }}
+          onEdgesDelete={(del) => del.forEach((e) => onRemoveEdge?.(String(e.source), String(e.target)))}
+          onNodeContextMenu={(e, n) => { e.preventDefault(); const box = (e.currentTarget as HTMLElement).closest('.react-flow')?.getBoundingClientRect(); setSelected(String(n.id)); setMenu({ id: String(n.id), x: e.clientX - (box?.left || 0), y: e.clientY - (box?.top || 0) }); }}
+          onPaneContextMenu={(e) => { if (!editable) return; e.preventDefault(); const box = (e.currentTarget as HTMLElement).closest('.react-flow')?.getBoundingClientRect(); setMenu({ id: null, x: (e as any).clientX - (box?.left || 0), y: (e as any).clientY - (box?.top || 0) }); }}
         >
           <Background />
           <Controls showInteractive={false} />
         </ReactFlow>
+        {menu && editable && (() => {
+          const item = 'block w-full px-3 py-1.5 text-left text-sm text-slate-700 hover:bg-slate-100 disabled:opacity-40 disabled:hover:bg-transparent';
+          const go = (f: () => void) => () => { setMenu(null); f(); };
+          return (
+            <div className="absolute z-20 min-w-[190px] rounded-lg border border-slate-200 bg-white py-1 shadow-lg"
+              style={{ left: menu.x, top: menu.y }} onContextMenu={(e) => e.preventDefault()}>
+              {menu.id ? (<>
+                <div className="truncate border-b border-slate-100 px-3 pb-1.5 pt-1 font-mono text-xs font-semibold text-slate-500">{menu.id}</div>
+                <button type="button" className={item} onClick={go(() => onOpenAgent?.(menu.id!))}>✎ Open settings</button>
+                <button type="button" className={item} disabled={menu.id === entry} onClick={go(() => onSetEntry?.(menu.id!))}>▶ Set as entry</button>
+                {onDuplicateAgent && <button type="button" className={item} onClick={go(() => onDuplicateAgent(menu.id!))}>⧉ Duplicate</button>}
+                {onRemoveAgent && (<>
+                  <div className="mt-1 border-t border-slate-100" />
+                  <button type="button" className={item + ' text-rose-700 hover:bg-rose-50'} disabled={crews.length <= 1}
+                    onClick={go(() => onRemoveAgent(menu.id!))}>✕ Remove agent</button>
+                </>)}
+              </>) : (
+                onAddAgent && <button type="button" className={item} onClick={go(onAddAgent)}>＋ Add agent</button>
+              )}
+            </div>
+          );
+        })()}
       </div>
+  );
+  return (
+    <div>
+      <div className="relative">
+        <button type="button" onClick={() => setFull(true)} title="Open the graph full screen"
+          className="absolute right-2 top-2 z-10 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50">⤢ Expand</button>
+        {!full && canvas(420)}
+      </div>
+      {full && (
+        <div className="wr-graph-print fixed inset-0 z-50 flex flex-col bg-white p-4" role="dialog" aria-modal="true">
+          <style>{`@media print {
+            @page { size: landscape; margin: 10mm; }
+            body * { visibility: hidden !important; }
+            .wr-graph-print, .wr-graph-print * { visibility: visible !important; }
+            .wr-graph-print { position: absolute !important; inset: 0 !important; }
+            .wr-graph-print .wr-noprint, .wr-graph-print .react-flow__controls { display: none !important; }
+          }`}</style>
+          <div className="mb-3 flex items-center gap-3">
+            <h3 className="text-base font-semibold text-slate-800">Team graph</h3>
+            <span className="flex-1" />
+            <button type="button" onClick={() => window.print()} title="Print the graph, or save it as PDF from the print dialog"
+              className="wr-noprint rounded-lg border border-slate-200 px-3 py-1 text-sm font-medium text-slate-700 hover:bg-slate-50">🖨 Print / PDF</button>
+            <button type="button" onClick={() => setFull(false)} title="Close (Esc)"
+              className="wr-noprint rounded-lg border border-slate-200 px-3 py-1 text-sm font-medium text-slate-700 hover:bg-slate-50">✕ Close</button>
+          </div>
+          <div className="min-h-0 flex-1">{canvas('calc(100vh - 90px)')}</div>
+        </div>
+      )}
       {editable && (
         <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-slate-600">
           {selected ? (
@@ -1140,6 +1206,9 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
                   onRemoveEdge={(from, to) => setEdges((es) => es.filter((x) => !(x.from === from && x.to === to)))}
                   onSetEntry={(id) => setEntry(id)}
                   onOpenAgent={openAgent}
+                  onAddAgent={addCrew}
+                  onRemoveAgent={(id) => { const i = crews.findIndex((c) => c.id === id); if (i >= 0 && crews.length > 1) { removeCrew(i); setEdges((es) => es.filter((x) => x.from !== id && x.to !== id)); if (entry === id) setEntry(crews.find((c) => c.id !== id)?.id || ''); } }}
+                  onDuplicateAgent={(id) => setCrews((cs) => { const c = cs.find((x) => x.id === id); if (!c) return cs; let n = 2; while (cs.some((x) => x.id === `${id}_${n}`)) n++; return [...cs, { ...JSON.parse(JSON.stringify(c)), id: `${id}_${n}` }]; })}
                 />
                 <details className="mt-4">
                   <summary className="cursor-pointer text-sm font-medium text-slate-600">Edit as a list</summary>
