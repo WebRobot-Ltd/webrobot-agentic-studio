@@ -76,7 +76,8 @@ interface Crew {
   engine: string;
   model: string;
   system_prompt: string;
-  mcp_url: string; // optional single MCP (allow:all); '' = none
+  // The agent's toolsets: every MCP server, in order (headers/extra keys of each are kept as loaded).
+  mcp: McpServer[];
   // Runtime/safety fields — now surfaced in the form (were silently dropped before).
   permission_mode: string;     // '' | 'default' | 'acceptEdits' | 'bypassPermissions'
   disallowed_tools: string;    // comma-separated in the form (e.g. "Bash, mcp__camoufox__agentic_browse")
@@ -88,6 +89,8 @@ interface Crew {
   _raw?: any;
 }
 const PERMISSION_MODES = ['', 'default', 'acceptEdits', 'bypassPermissions'];
+interface McpServer { name: string; type?: string; url: string; allow?: string | string[]; headers?: Record<string, string>; [k: string]: any }
+const WEBROBOT_MCP: McpServer = { name: 'webrobot', type: 'http', url: 'https://mcp.webrobot.eu/mcp', allow: 'all' };
 interface Edge { from: string; to: string; }
 interface VarDecl {
   name: string; label: string; default: string; bind: string;
@@ -204,7 +207,7 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
   const [category, setCategory] = useState('data_engineer');
   const [tags, setTags] = useState('');
   const [crews, setCrews] = useState<Crew[]>([
-    { id: 'agent', engine: 'agent_sdk', model: 'claude-sonnet-4-5', system_prompt: 'You are a helpful WebRobot agent.', mcp_url: 'https://mcp.webrobot.eu/mcp', permission_mode: '', disallowed_tools: '', max_turns: '', max_budget_usd: '' },
+    { id: 'agent', engine: 'agent_sdk', model: 'claude-sonnet-4-5', system_prompt: 'You are a helpful WebRobot agent.', mcp: [{ ...WEBROBOT_MCP }], permission_mode: '', disallowed_tools: '', max_turns: '', max_budget_usd: '' },
   ]);
   const [entry, setEntry] = useState('agent');
   const [edges, setEdges] = useState<Edge[]>([]);
@@ -324,7 +327,7 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
     setDescription(meta?.description || def.description || '');
     const cs: Crew[] = (def.crews || []).map((c: any) => ({
       id: c.id || 'agent', engine: c.engine || 'agent_sdk', model: c.model || 'claude-sonnet-4-5',
-      system_prompt: c.system_prompt || '', mcp_url: (c.mcp_servers?.[0]?.url) || '',
+      system_prompt: c.system_prompt || '', mcp: Array.isArray(c.mcp_servers) ? c.mcp_servers.map((m: any) => ({ ...m })) : [],
       permission_mode: c.permission_mode || '',
       disallowed_tools: Array.isArray(c.disallowed_tools) ? c.disallowed_tools.join(', ') : (c.disallowed_tools || ''),
       max_turns: c.max_turns != null ? String(c.max_turns) : '',
@@ -410,15 +413,9 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
         // (auth, goal_template, extra mcp_servers, …) is preserved across the save.
         const out: any = { ...(c._raw || {}) };
         out.id = c.id; out.engine = c.engine; out.model = c.model; out.system_prompt = c.system_prompt;
-        // MCP: the single url edits the FIRST server; extra servers from the
-        // original are kept. Empty url + no original servers → no mcp_servers.
-        // Empty url WITH original servers → keep them (manage multi-server in YAML mode).
-        const rawMcp = Array.isArray(c._raw?.mcp_servers) ? c._raw.mcp_servers : [];
-        if (c.mcp_url) {
-          out.mcp_servers = rawMcp.length
-            ? [{ ...rawMcp[0], url: c.mcp_url }, ...rawMcp.slice(1)]
-            : [{ name: 'mcp', type: 'http', url: c.mcp_url, allow: 'all' }];
-        } else if (rawMcp.length) { out.mcp_servers = rawMcp; } else { delete out.mcp_servers; }
+        // MCP: the form edits the whole list (empty url rows are dropped).
+        const servers = c.mcp.filter((m) => (m.url || '').trim()).map((m) => ({ type: 'http', allow: 'all', ...m, url: m.url.trim() }));
+        if (servers.length) out.mcp_servers = servers; else delete out.mcp_servers;
         // Surfaced runtime/safety fields (empty → omitted / cleared)
         if (c.permission_mode) out.permission_mode = c.permission_mode; else delete out.permission_mode;
         const dt = splitCsv(c.disallowed_tools); if (dt.length) out.disallowed_tools = dt; else delete out.disallowed_tools;
@@ -659,17 +656,17 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
   // L'integrazione e' un mcp_servers aggiuntivo (in _raw, preservato dal builder oltre il primario):
   // url dell'MCP + header che RIFERISCE l'env (${PROVIDER_API_KEY}), mai il segreto. Il segreto va in
   // cloud_credentials (saveMcpCredential) e il runner-token lo risolve a run time.
-  const crewServers = (c: Crew): any[] => (Array.isArray((c as any)._raw?.mcp_servers) ? (c as any)._raw.mcp_servers : []);
+  const crewServers = (c: Crew): McpServer[] => c.mcp || [];
   const attachIntegration = (i: number, c: Crew, integ: McpIntegration) => {
     const servers = [...crewServers(c)];
     if (!servers.some((s) => s?.url === integ.mcpUrl)) {
       servers.push({ name: integ.provider, type: 'http', url: integ.mcpUrl, allow: 'all', headers: mcpAuthHeader(integ) });
     }
-    setCrew(i, { _raw: { ...((c as any)._raw || {}), mcp_servers: servers } } as Partial<Crew>);
+    setCrew(i, { mcp: servers });
   };
   const detachIntegration = (i: number, c: Crew, integ: McpIntegration) => {
     const servers = crewServers(c).filter((s) => s?.url !== integ.mcpUrl);
-    setCrew(i, { _raw: { ...((c as any)._raw || {}), mcp_servers: servers } } as Partial<Crew>);
+    setCrew(i, { mcp: servers });
   };
   const saveIntegrationKey = async (i: number, integ: McpIntegration) => {
     const k = `${i}:${integ.provider}`;
@@ -684,7 +681,7 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
       setIntgMsg((m) => ({ ...m, [k]: e instanceof AgentStudioError ? `save → ${e.status}` : 'save failed' }));
     }
   };
-  const addCrew = () => setCrews((cs) => [...cs, { id: `agent${cs.length + 1}`, engine: 'agent_sdk', model: 'claude-sonnet-5-5', system_prompt: '', mcp_url: '', permission_mode: '', disallowed_tools: '', max_turns: '', max_budget_usd: '' }]);
+  const addCrew = () => setCrews((cs) => [...cs, { id: `agent${cs.length + 1}`, engine: 'agent_sdk', model: 'claude-sonnet-5-5', system_prompt: '', mcp: [{ ...WEBROBOT_MCP }], permission_mode: '', disallowed_tools: '', max_turns: '', max_budget_usd: '' }]);
   const removeCrew = (i: number) => setCrews((cs) => cs.filter((_, j) => j !== i));
 
   const setVar = (i: number, patch: Partial<VarDecl>) =>
@@ -957,7 +954,7 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
                     <p className="mb-2 text-[11px] leading-snug text-slate-400">
                       <b className="font-medium text-slate-500">id</b> = short name of this agent ·
                       <b className="font-medium text-slate-500"> engine</b> = runtime (agent_sdk is the default tool-using agent) ·
-                      <b className="font-medium text-slate-500"> model</b> = the LLM. The system prompt below is the agent's instructions; the MCP url gives it a toolset.
+                      <b className="font-medium text-slate-500"> model</b> = the LLM. The system prompt below is the agent's instructions; the MCP servers give it its tools.
                     </p>
                     <div className="flex items-center gap-2 mb-2">
                       <input className={inp + ' max-w-[140px]'} value={c.id} onChange={(e) => setCrew(i, { id: e.target.value })} placeholder="id" title="Short unique name for this agent (e.g. researcher)" />
@@ -966,61 +963,82 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
                       {crews.length > 1 && <button onClick={() => removeCrew(i)} className="text-slate-400 hover:text-red-600"><Trash2 className="h-4 w-4" /></button>}
                     </div>
                     <textarea className={inp + ' h-16 mb-2'} value={c.system_prompt} onChange={(e) => setCrew(i, { system_prompt: e.target.value })} placeholder="system prompt (use {{variable}} to inject declared variables)" />
-                    <input className={inp + ' mb-2'} value={c.mcp_url} onChange={(e) => setCrew(i, { mcp_url: e.target.value })} placeholder="MCP url (optional, e.g. https://mcp.webrobot.eu/mcp)" />
-
-                    {/* MCP integrati (con credenziali). Il webrobot full MCP sopra non chiede chiavi; questi
-                        SI (Postiz, ...). La chiave si salva in cloud_credentials (per org), l'header riferisce
-                        solo ${'${PROVIDER_API_KEY}'} — il segreto non entra mai nel profilo. */}
-                    {mcpIntegrations.length > 0 && (() => {
-                      const attached = mcpIntegrations.filter((ig) => crewServers(c).some((s) => s?.url === ig.mcpUrl));
-                      const available = mcpIntegrations.filter((ig) => !attached.some((a) => a.provider === ig.provider));
+                    {/* Tools = MCP servers. One explicit list (user 10-23: "it is not clear how to add MCP
+                        endpoints"): before, a single url box silently edited the FIRST server, the others
+                        lived only in the YAML, and typing a url could overwrite an integration. */}
+                    {(() => {
+                      const servers = crewServers(c);
+                      const setServers = (next: McpServer[]) => setCrew(i, { mcp: next });
+                      const patchServer = (k: number, patch: Partial<McpServer>) => setServers(servers.map((m, j) => (j === k ? { ...m, ...patch } : m)));
+                      const hasWebrobot = servers.some((m) => m.url === WEBROBOT_MCP.url);
+                      const integOf = (m: McpServer) => mcpIntegrations.find((ig) => ig.mcpUrl === m.url);
+                      const available = mcpIntegrations.filter((ig) => !servers.some((m) => m.url === ig.mcpUrl));
                       return (
-                        <div className="mb-2 rounded-md border border-slate-200 bg-slate-50 p-2">
-                          <div className="mb-1 flex items-center gap-2">
-                            <span className="text-xs font-medium text-slate-600">Integration MCPs (with credentials)</span>
+                        <div className="mb-2 rounded-md border border-slate-200 bg-slate-50 p-2.5">
+                          <div className="mb-1.5 flex flex-wrap items-center gap-2">
+                            <span className="text-sm font-medium text-slate-700">Tools · MCP servers</span>
+                            <span className="text-xs text-slate-500">each server gives the agent a set of tools</span>
+                          </div>
+                          {servers.length === 0 && <p className="mb-2 text-xs text-slate-500">No tools: the agent can only reason and write. Add a server below.</p>}
+                          <div className="space-y-1.5">
+                            {servers.map((m, k) => {
+                              const ig = integOf(m);
+                              const allowAll = !m.allow || m.allow === 'all';
+                              const key = `${i}:${ig?.provider}`;
+                              return (
+                                <div key={k} className="rounded border border-slate-200 bg-white p-2">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <input className={inp + ' h-8 py-1 max-w-[130px] font-mono'} value={m.name} title="Short name: the tools appear to the agent as mcp__<name>__<tool>"
+                                      onChange={(e) => patchServer(k, { name: e.target.value.replace(/[^a-zA-Z0-9_-]/g, '') })} placeholder="name" />
+                                    <input className={inp + ' h-8 py-1 flex-1 min-w-[220px]'} value={m.url} onChange={(e) => patchServer(k, { url: e.target.value })} placeholder="https://… /mcp endpoint (streamable HTTP)" />
+                                    <button type="button" onClick={() => setServers(servers.filter((_, j) => j !== k))} className="text-slate-400 hover:text-red-600" title="Remove this server"><Trash2 className="h-4 w-4" /></button>
+                                  </div>
+                                  <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+                                    <label className="inline-flex items-center gap-1">
+                                      <input type="checkbox" checked={allowAll} onChange={(e) => patchServer(k, { allow: e.target.checked ? 'all' : [] })} /> all its tools
+                                    </label>
+                                    {!allowAll && (
+                                      <input className={inp + ' h-7 py-0.5 flex-1 min-w-[200px] text-xs'} value={Array.isArray(m.allow) ? m.allow.join(', ') : String(m.allow || '')}
+                                        onChange={(e) => patchServer(k, { allow: e.target.value.split(',').map((t) => t.trim()).filter(Boolean) })}
+                                        placeholder="only these tools, comma-separated (e.g. catalogSources, wizardValidate)" />
+                                    )}
+                                    {m.headers && Object.keys(m.headers).length > 0 && !ig && (
+                                      <span className="rounded bg-slate-100 px-1.5 py-0.5">🔑 sends {Object.keys(m.headers).join(', ')}</span>
+                                    )}
+                                  </div>
+                                  {ig && (
+                                    <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                                      <span className="text-xs text-slate-600">🔑 {ig.label} API key</span>
+                                      <input type="password" className={inp + ' h-8 py-1 max-w-[220px]'} placeholder={`${ig.provider} API key`}
+                                        value={intgKey[key] || ''} onChange={(e) => setIntgKey((mm) => ({ ...mm, [key]: e.target.value }))} />
+                                      <button type="button" onClick={() => saveIntegrationKey(i, ig)} disabled={!(intgKey[key] || '').trim()}
+                                        className="rounded-md bg-slate-900 px-2.5 py-1 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50">Save key</button>
+                                      <span className="text-[11px] text-slate-500">{intgMsg[key] || 'stored for your organization, never in the profile'}</span>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            {!hasWebrobot && (
+                              <button type="button" onClick={() => setServers([...servers, { ...WEBROBOT_MCP }])}
+                                className="inline-flex items-center gap-1 rounded-lg border border-brand-200 bg-white px-2.5 py-1 text-sm font-medium text-brand-800 hover:bg-brand-50">
+                                <Plus className="h-4 w-4" /> WebRobot platform tools
+                              </button>
+                            )}
+                            <button type="button" onClick={() => setServers([...servers, { name: `mcp${servers.length + 1}`, type: 'http', url: '', allow: 'all' }])}
+                              className="inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-sm font-medium text-slate-700 hover:bg-slate-50">
+                              <Plus className="h-4 w-4" /> Custom MCP server
+                            </button>
                             {available.length > 0 && (
-                              <select
-                                className={inp + ' max-w-[220px] h-8 py-1'}
-                                value=""
-                                onChange={(e) => { const ig = mcpIntegrations.find((x) => x.provider === e.target.value); if (ig) attachIntegration(i, c, ig); }}
-                              >
-                                <option value="">+ add an integration…</option>
+                              <select className={inp + ' max-w-[240px] h-8 py-1'} value=""
+                                onChange={(e) => { const ig = mcpIntegrations.find((x) => x.provider === e.target.value); if (ig) attachIntegration(i, c, ig); }}>
+                                <option value="">+ Integration (needs a key)…</option>
                                 {available.map((ig) => <option key={ig.provider} value={ig.provider}>{ig.label}</option>)}
                               </select>
                             )}
                           </div>
-                          {attached.length === 0 && (
-                            <p className="text-[11px] leading-snug text-slate-400">
-                              External MCPs that need a key (e.g. Postiz). Add one, paste its API key, and Save —
-                              the key is stored securely for your organization, never in the profile.
-                            </p>
-                          )}
-                          {attached.map((ig) => {
-                            const k = `${i}:${ig.provider}`;
-                            return (
-                              <div key={ig.provider} className="mt-1 flex flex-wrap items-center gap-2 rounded border border-slate-200 bg-white p-2">
-                                <span className="text-xs font-medium text-slate-700">{ig.label}</span>
-                                <code className="rounded bg-slate-100 px-1 text-[10px] text-slate-500">${'{'}{ig.apiKeyEnv}{'}'}</code>
-                                <input
-                                  type="password"
-                                  className={inp + ' h-8 py-1 max-w-[220px]'}
-                                  placeholder={`${ig.provider} API key`}
-                                  value={intgKey[k] || ''}
-                                  onChange={(e) => setIntgKey((m) => ({ ...m, [k]: e.target.value }))}
-                                />
-                                <button
-                                  type="button"
-                                  onClick={() => saveIntegrationKey(i, ig)}
-                                  disabled={!(intgKey[k] || '').trim()}
-                                  className="rounded-md bg-slate-900 px-2.5 py-1 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50"
-                                >
-                                  Save key
-                                </button>
-                                <button type="button" onClick={() => detachIntegration(i, c, ig)} className="text-slate-400 hover:text-red-600" title="Remove this integration"><Trash2 className="h-4 w-4" /></button>
-                                {intgMsg[k] && <span className="text-[11px] text-slate-500">{intgMsg[k]}</span>}
-                              </div>
-                            );
-                          })}
                         </div>
                       );
                     })()}
