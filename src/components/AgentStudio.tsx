@@ -17,7 +17,8 @@
 //   · `editId` is a prop (was read from Next's useSearchParams).
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Bot, Plus, Trash2, Loader2, Save, Send, Users, Variable, Wrench, Tag, Sparkles } from 'lucide-react';
+import { Bot, Plus, Trash2, Loader2, Save, Send, Users, Variable, Wrench, Tag, Sparkles, MessageSquare, Info, Network, LineChart, Code2 } from 'lucide-react';
+import TestPanel from './TestPanel';
 import { ReactFlow, Background, Controls, type Node, type Edge as FlowEdge } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {
@@ -34,6 +35,19 @@ import {
 
 // Contesto del canale draft, uguale al pageContext che DesignWithChat inietta nella chat.
 const DRAFT_CTX = 'agentic:agent-studio';
+
+// Left-nav sections of the studio (redesign 10-23). Marketplace and Trading are off the main path:
+// most agents are never sold and never trade.
+const SECTIONS = [
+  { key: 'agents', label: 'Agents', hint: 'Instructions, model, tools', icon: Bot },
+  { key: 'team', label: 'Team', hint: 'Who hands off to whom', icon: Network },
+  { key: 'overview', label: 'Overview', hint: 'Name, surface, description', icon: Info },
+  { key: 'tools', label: 'Local tools', hint: 'Inline Python tools', icon: Wrench },
+  { key: 'variables', label: 'Variables', hint: 'Knobs buyers configure', icon: Variable },
+  { key: 'marketplace', label: 'Marketplace', hint: 'Price, licence, publishing', icon: Tag },
+  { key: 'trading', label: 'Trading', hint: 'Bind a strategy to a market', icon: LineChart },
+  { key: 'definition', label: 'Definition', hint: 'The generated spec (JSON)', icon: Code2 },
+] as const;
 
 const CATEGORIES = [
   'data_engineer', 'scraping_agent', 'research_agent', 'monitoring_agent',
@@ -193,6 +207,11 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
   const [savedId, setSavedId] = useState<number | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  const [section, setSection] = useState<string>('agents');
+  const [testOpen, setTestOpen] = useState(true);
+  // The spec as last saved/loaded: the test panel runs the SAVED profile, so it warns on unsaved edits.
+  const [savedSpec, setSavedSpec] = useState<string | null>(null);
+  const markSaved = useRef(false);
 
   // Ramo "descrivi il team -> l'agente lo progetta" (parita' col pipeline designer).
   const [askText, setAskText] = useState('');
@@ -220,7 +239,7 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
     id?: string | number; status?: string; surface?: string; name?: string; version?: string; description?: string;
   }) => {
     def = def || {};
-    if (meta?.id != null) setSavedId(Number(meta.id));
+    if (meta?.id != null) { setSavedId(Number(meta.id)); markSaved.current = true; }
     if (meta?.status) setStatus(meta.status);
     if (meta?.surface) setSurface(meta.surface);
     setMode(def.chat_mode === 'team' ? 'team' : 'single');
@@ -359,6 +378,10 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
   }, [code, crews, isTeam, entry, edges, declaredVars, declaredTools,
       tradingEnabled, tradingMode, venue, universe, barInterval, tradingCredential,
       maxExposurePct, maxDrawdownPct, killSwitch]);
+  useEffect(() => {
+    if (markSaved.current) { markSaved.current = false; setSavedSpec(JSON.stringify(agentDefinition)); }
+  }, [agentDefinition]);
+  const dirty = savedSpec != null && savedSpec !== JSON.stringify(agentDefinition);
 
   // ── "Descrivi il team -> l'agente lo progetta" ────────────────────────────────
   // Speculare a askForPipeline del pipeline designer: si avvia `webrobot-agent-designer`, se ne fa
@@ -473,7 +496,7 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
       };
       const j = await saveAgenticProfile(profileBody, savedId != null ? String(savedId) : undefined);
       const id = j?.id ?? j?.data?.id ?? savedId;
-      setSavedId(id); setStatus('draft');
+      setSavedId(id); setStatus('draft'); setSavedSpec(JSON.stringify(agentDefinition));
       setMsg({ kind: 'ok', text: `Profile saved (id ${id}).` });
       if (id != null) onSaved?.(id);
       return id;
@@ -688,296 +711,344 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
         <div className={`mb-4 rounded-lg border p-3 text-sm ${msg.kind === 'ok' ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-red-200 bg-red-50 text-red-700'}`}>{msg.text}</div>
       )}
 
-      {/* Info */}
-      <section className="rounded-xl border border-slate-200 bg-white p-5 mb-5 shadow-sm">
-        <h2 className="font-semibold mb-3">Info</h2>
-        <div className="grid sm:grid-cols-2 gap-3">
-          <L label="Code (kebab-case)" hint="The profile's unique id, lowercase-with-dashes. Used internally, not shown to buyers."><input className={inp} value={code} onChange={(e) => setCode(e.target.value)} placeholder="my-agent" /></L>
-          <L label="Display name" hint="The name people see in the marketplace and the chat picker."><input className={inp} value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="My Agent" /></L>
-          <L label="Version" hint="Bump it when you change the profile (e.g. 1.0.0 → 1.1.0)."><input className={inp} value={version} onChange={(e) => setVersion(e.target.value)} /></L>
-          <L label="Category" hint="Where the agent is grouped in the marketplace."><select className={inp} value={category} onChange={(e) => setCategory(e.target.value)}>{CATEGORIES.map((c) => <option key={c} value={c}>{c.replace(/_/g, ' ')}</option>)}</select></L>
-          <L label="Surface" hint="Where the agent runs: a chat persona users pick, a background batch (scheduled/triggered), or both."><select className={inp} value={surface} onChange={(e) => setSurface(e.target.value)} title="chat = persona selectable in the chat · background = CrewAI/Ray batch (schedule/trigger) · both">
-            <option value="background">⚙ background (batch)</option>
-            <option value="chat">💬 chat (persona)</option>
-            <option value="both">both</option>
-          </select></L>
-          <L label="Tags (comma-sep)" hint="Keywords to find the agent in the marketplace. Comma-separated."><input className={inp} value={tags} onChange={(e) => setTags(e.target.value)} placeholder="etl, scraping" /></L>
-          <L label="Required capabilities (comma-sep)" hint="Platform features the agent needs to run — e.g. webrobot_mcp (the WebRobot tools), postiz_mcp (social publishing). A buyer whose plan lacks them can't install it. Leave empty if none. Comma-separated."><input className={inp} value={requiredCaps} onChange={(e) => setRequiredCaps(e.target.value)} placeholder="webrobot_mcp, postiz_mcp" /></L>
-        </div>
-        <L label="Description" className="mt-3" hint="One or two sentences on what this agent does — shown to buyers in the marketplace."><textarea className={inp + ' h-20'} value={description} onChange={(e) => setDescription(e.target.value)} /></L>
-      </section>
-
-      {/* Crews */}
-      <section className="rounded-xl border border-slate-200 bg-white p-5 mb-5 shadow-sm">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="font-semibold">Crews <span className="text-xs font-normal text-slate-400">({crews.length} {crews.length === 1 ? 'agent' : 'agents'})</span></h2>
-          <div className="flex items-center gap-3">
-            {/* EXPLICIT structure selector (decoupled from crew count). */}
-            <div className="inline-flex rounded-md border border-slate-200 bg-white p-0.5 text-xs">
-              {(['single', 'team'] as const).map((m) => (
-                <button key={m} onClick={() => setMode(m)}
-                  className={`rounded px-2.5 py-1 font-medium transition ${mode === m ? 'bg-brand-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}
-                  title={m === 'single' ? 'Independent agent(s) — 1 single, N = personas (chat picker), no DAG' : 'Agents collaborate via an orchestration DAG (chat_mode: team)'}>
-                  {m === 'single' ? (crews.length > 1 ? 'Personas' : 'Single') : 'Team'}
-                </button>
-              ))}
-            </div>
-            <button onClick={addCrew} className="inline-flex items-center gap-1 text-sm text-brand-700 hover:underline"><Plus className="h-4 w-4" /> Add agent</button>
-          </div>
-        </div>
-        <div className="space-y-4">
-          {crews.map((c, i) => (
-            <div key={i} className="rounded-lg border border-slate-200 p-3">
-              <p className="mb-2 text-[11px] leading-snug text-slate-400">
-                <b className="font-medium text-slate-500">id</b> = short name of this agent ·
-                <b className="font-medium text-slate-500"> engine</b> = runtime (agent_sdk is the default tool-using agent) ·
-                <b className="font-medium text-slate-500"> model</b> = the LLM. The system prompt below is the agent's instructions; the MCP url gives it a toolset.
-              </p>
-              <div className="flex items-center gap-2 mb-2">
-                <input className={inp + ' max-w-[140px]'} value={c.id} onChange={(e) => setCrew(i, { id: e.target.value })} placeholder="id" title="Short unique name for this agent (e.g. researcher)" />
-                <select className={inp + ' max-w-[130px]'} value={c.engine} onChange={(e) => setCrew(i, { engine: e.target.value })}>{ENGINES.map((en) => <option key={en} value={en}>{en}</option>)}</select>
-                <input className={inp} value={c.model} onChange={(e) => setCrew(i, { model: e.target.value })} placeholder="model" />
-                {crews.length > 1 && <button onClick={() => removeCrew(i)} className="text-slate-400 hover:text-red-600"><Trash2 className="h-4 w-4" /></button>}
-              </div>
-              <textarea className={inp + ' h-16 mb-2'} value={c.system_prompt} onChange={(e) => setCrew(i, { system_prompt: e.target.value })} placeholder="system prompt (use {{variable}} to inject declared variables)" />
-              <input className={inp + ' mb-2'} value={c.mcp_url} onChange={(e) => setCrew(i, { mcp_url: e.target.value })} placeholder="MCP url (optional, e.g. https://mcp.webrobot.eu/mcp)" />
-
-              {/* MCP integrati (con credenziali). Il webrobot full MCP sopra non chiede chiavi; questi
-                  SI (Postiz, ...). La chiave si salva in cloud_credentials (per org), l'header riferisce
-                  solo ${'${PROVIDER_API_KEY}'} — il segreto non entra mai nel profilo. */}
-              {mcpIntegrations.length > 0 && (() => {
-                const attached = mcpIntegrations.filter((ig) => crewServers(c).some((s) => s?.url === ig.mcpUrl));
-                const available = mcpIntegrations.filter((ig) => !attached.some((a) => a.provider === ig.provider));
-                return (
-                  <div className="mb-2 rounded-md border border-slate-200 bg-slate-50 p-2">
-                    <div className="mb-1 flex items-center gap-2">
-                      <span className="text-xs font-medium text-slate-600">Integration MCPs (with credentials)</span>
-                      {available.length > 0 && (
-                        <select
-                          className={inp + ' max-w-[220px] h-8 py-1'}
-                          value=""
-                          onChange={(e) => { const ig = mcpIntegrations.find((x) => x.provider === e.target.value); if (ig) attachIntegration(i, c, ig); }}
-                        >
-                          <option value="">+ add an integration…</option>
-                          {available.map((ig) => <option key={ig.provider} value={ig.provider}>{ig.label}</option>)}
-                        </select>
-                      )}
-                    </div>
-                    {attached.length === 0 && (
-                      <p className="text-[11px] leading-snug text-slate-400">
-                        External MCPs that need a key (e.g. Postiz). Add one, paste its API key, and Save —
-                        the key is stored securely for your organization, never in the profile.
-                      </p>
-                    )}
-                    {attached.map((ig) => {
-                      const k = `${i}:${ig.provider}`;
-                      return (
-                        <div key={ig.provider} className="mt-1 flex flex-wrap items-center gap-2 rounded border border-slate-200 bg-white p-2">
-                          <span className="text-xs font-medium text-slate-700">{ig.label}</span>
-                          <code className="rounded bg-slate-100 px-1 text-[10px] text-slate-500">${'{'}{ig.apiKeyEnv}{'}'}</code>
-                          <input
-                            type="password"
-                            className={inp + ' h-8 py-1 max-w-[220px]'}
-                            placeholder={`${ig.provider} API key`}
-                            value={intgKey[k] || ''}
-                            onChange={(e) => setIntgKey((m) => ({ ...m, [k]: e.target.value }))}
-                          />
-                          <button
-                            type="button"
-                            onClick={() => saveIntegrationKey(i, ig)}
-                            disabled={!(intgKey[k] || '').trim()}
-                            className="rounded-md bg-slate-900 px-2.5 py-1 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50"
-                          >
-                            Save key
-                          </button>
-                          <button type="button" onClick={() => detachIntegration(i, c, ig)} className="text-slate-400 hover:text-red-600" title="Remove this integration"><Trash2 className="h-4 w-4" /></button>
-                          {intgMsg[k] && <span className="text-[11px] text-slate-500">{intgMsg[k]}</span>}
-                        </div>
-                      );
-                    })}
-                  </div>
-                );
-              })()}
-              {/* Runtime & safety — now editable in the form (previously YAML-only and silently dropped on edit). */}
-              <div className="grid sm:grid-cols-2 gap-2">
-                <L label="Permission mode" hint="How freely the agent acts (agent_sdk): default asks before sensitive actions; bypassPermissions runs unattended — use for background jobs."><select className={inp} value={c.permission_mode} onChange={(e) => setCrew(i, { permission_mode: e.target.value })}>{PERMISSION_MODES.map((p) => <option key={p} value={p}>{p || '(default)'}</option>)}</select></L>
-                <L label="Max turns" hint="Hard cap on reasoning/tool steps in one run — stops a runaway agent. e.g. 20–40."><input className={inp} type="number" min="1" value={c.max_turns} onChange={(e) => setCrew(i, { max_turns: e.target.value })} placeholder="e.g. 20" /></L>
-                <L label="Max budget (USD/turn)" hint="Spend ceiling per turn; the run stops if exceeded. Keeps costs bounded."><input className={inp} type="number" min="0" step="0.01" value={c.max_budget_usd} onChange={(e) => setCrew(i, { max_budget_usd: e.target.value })} placeholder="e.g. 0.50" /></L>
-                <L label="Disallowed tools (comma-sep)" hint="Tools this agent must NOT use, even if its MCP exposes them (e.g. Bash). A safety fence. Comma-separated."><input className={inp} value={c.disallowed_tools} onChange={(e) => setCrew(i, { disallowed_tools: e.target.value })} placeholder="e.g. Bash, mcp__camoufox__agentic_browse" /></L>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* Trading — bind the strategy-agent to a market (increment 1) */}
-      <section className="rounded-xl border border-slate-200 bg-white p-5 mb-5 shadow-sm">
-        <div className="flex items-center justify-between mb-1">
-          <h2 className="font-semibold flex items-center gap-2">📈 Trading</h2>
-          <label className="inline-flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={tradingEnabled} onChange={(e) => setTradingEnabled(e.target.checked)} /> Trading bot
-          </label>
-        </div>
-        <p className="text-xs text-slate-500 mb-3">The strategy stays an agent; these fields bind it to a market. The agent sets the weights on the <b>asset universe</b> — the Nautilus node converges to them.</p>
-        {tradingEnabled && (
-          <div className="space-y-3">
-            <div className="inline-flex rounded-md border border-slate-200 bg-white p-0.5 text-xs">
-              {TRADING_MODES.map((m) => (
-                <button key={m.v} onClick={() => setTradingMode(m.v)}
-                  className={`rounded px-2.5 py-1 font-medium transition ${tradingMode === m.v ? 'bg-brand-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>
-                  {m.label}
-                </button>
-              ))}
-            </div>
-            <div className="grid sm:grid-cols-2 gap-3">
-              <L label="Tenant (org id) — empty = your org">
-                <input className={inp} value={tradingOrgId} onChange={(e) => setTradingOrgId(e.target.value)} placeholder="super_admin: e.g. 5 (Screebits)" />
-              </L>
-              <div className="flex items-end text-[11px] pb-1">
-                {allowedErr ? <span className="text-amber-700">{allowedErr}</span>
-                  : allowed && !allowed.enabled ? <span className="text-amber-700">Live trading is NOT enabled for this org — enable it in /dashboard/trading/limits.</span>
-                  : allowed ? <span className="text-emerald-700">✓ Trading enabled · {allowed.instruments.length} allowed instruments</span>
-                  : <span className="text-slate-400">loading allowed assets…</span>}
-              </div>
-            </div>
-            <L label="Asset universe — the strategy monitors and allocates across these (select from the allow-list)">
-              {allowed && allowed.instruments.length > 0 ? (
-                <div className="flex flex-wrap gap-2">
-                  {allowed.instruments.map((sym) => {
-                    const on = universeSet.includes(sym);
-                    return (
-                      <button key={sym} type="button" onClick={() => toggleSym(sym)}
-                        className={`rounded-md border px-2.5 py-1 text-xs font-mono ${on ? 'border-brand-600 bg-brand-50 text-brand-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
-                        {on ? '✓ ' : ''}{sym}
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : (
-                <input className={inp} value={universe} onChange={(e) => setUniverse(e.target.value)} placeholder="BTCUSDT.BINANCE, ETHUSDT.BINANCE" />
-              )}
-            </L>
-            <div className="grid sm:grid-cols-3 gap-3">
-              <L label="Venue"><select className={inp} value={venue} onChange={(e) => setVenue(e.target.value)}>{(allowed && allowed.venues.length ? allowed.venues : VENUES).map((v) => <option key={v}>{v}</option>)}</select></L>
-              <L label="Bar interval"><select className={inp} value={barInterval} onChange={(e) => setBarInterval(e.target.value)}>{BAR_INTERVALS.map((b) => <option key={b}>{b}</option>)}</select></L>
-              <L label="Exchange credentials"><input className={inp} value={tradingCredential} onChange={(e) => setTradingCredential(e.target.value)} placeholder="cloud_credential name" /></L>
-            </div>
-            <div className="grid sm:grid-cols-3 gap-3">
-              <L label="Max exposure %"><input type="number" className={inp} value={maxExposurePct} onChange={(e) => setMaxExposurePct(e.target.value)} /></L>
-              <L label="Max drawdown % (constraint)"><input type="number" className={inp} value={maxDrawdownPct} onChange={(e) => setMaxDrawdownPct(e.target.value)} /></L>
-              <L label="Kill-switch"><span className="inline-flex items-center gap-2 text-sm h-9"><input type="checkbox" checked={killSwitch} onChange={(e) => setKillSwitch(e.target.checked)} /> enabled</span></L>
-            </div>
-            <p className="text-[11px] text-amber-700">⚠ Credentials must belong to the <b>end customer</b>, not fall back to the tenant. The guardrails (trading enabled, cap, allow-list) are enforced by the server.</p>
-            <div className="flex items-center gap-3 pt-1">
-              <button onClick={deployBot} disabled={busy === 'deploy' || !universe.trim()}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50">
-                {busy === 'deploy' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Deploy bot
-              </button>
-              <span className="text-[11px] text-slate-500">Registers the strategy (kind: agentic) and starts the bot. A super_admin must act on behalf of a tenant.</span>
-            </div>
-          </div>
-        )}
-      </section>
-
-      {/* Variables — the clone-wizard knobs */}
-      <section className="rounded-xl border border-slate-200 bg-white p-5 mb-5 shadow-sm">
-        <div className="flex items-center justify-between mb-1">
-          <h2 className="font-semibold flex items-center gap-2"><Variable className="h-4 w-4 text-brand-600" /> Variables</h2>
-          <button onClick={addVar} className="inline-flex items-center gap-1 text-sm text-brand-700 hover:underline"><Plus className="h-4 w-4" /> Add variable</button>
-        </div>
-        <p className="text-xs text-slate-500 mb-3">Configurable knobs the clone wizard renders. <b>bind</b>: <code>prompt</code> = {'{{name}}'} in the system prompt · <code>env</code> = read by local tools via <code>os.getenv</code> · <code>both</code>. Mark <b>secret</b> + set a <b>provider</b> to require a cloud credential (key resolved server-side, never stored).</p>
-        <div className="space-y-3">
-          {variables.map((v, i) => (
-            <div key={i} className="rounded-lg border border-slate-200 p-3 grid sm:grid-cols-2 gap-2">
-              <input className={inp} value={v.name} onChange={(e) => setVar(i, { name: e.target.value })} placeholder="name (e.g. basket)" />
-              <input className={inp} value={v.label} onChange={(e) => setVar(i, { label: e.target.value })} placeholder="label" />
-              <input className={inp} value={v.default} onChange={(e) => setVar(i, { default: e.target.value })} placeholder="default" disabled={v.secret} />
-              <div className="flex items-center gap-2">
-                <select className={inp + ' max-w-[110px]'} value={v.bind} onChange={(e) => setVar(i, { bind: e.target.value })} disabled={v.secret}>{BINDS.map((b) => <option key={b} value={b}>{b}</option>)}</select>
-                <label className="flex items-center gap-1 text-xs text-slate-600 whitespace-nowrap"><input type="checkbox" checked={v.secret} onChange={(e) => setVar(i, { secret: e.target.checked })} /> secret</label>
-                <button onClick={() => removeVar(i)} className="ml-auto text-slate-400 hover:text-red-600"><Trash2 className="h-4 w-4" /></button>
-              </div>
-              {v.secret && <input className={inp} value={v.provider} onChange={(e) => setVar(i, { provider: e.target.value })} placeholder="credential provider (e.g. postiz, binance)" />}
-              <input className={inp} value={v.description} onChange={(e) => setVar(i, { description: e.target.value })} placeholder="description (shown in the wizard)" />
-            </div>
-          ))}
-          {!variables.length && <p className="text-xs text-slate-400">No variables — the clone is fixed. Add some to make it configurable.</p>}
-        </div>
-      </section>
-
-      {/* Inline local tools */}
-      <section className="rounded-xl border border-slate-200 bg-white p-5 mb-5 shadow-sm">
-        <div className="flex items-center justify-between mb-1">
-          <h2 className="font-semibold flex items-center gap-2"><Wrench className="h-4 w-4 text-brand-600" /> Local tools <span className="text-xs font-normal text-slate-400">(inline, no rebuild)</span></h2>
-          <button onClick={addTool} className="inline-flex items-center gap-1 text-sm text-brand-700 hover:underline"><Plus className="h-4 w-4" /> Add tool</button>
-        </div>
-        <p className="text-xs text-slate-500 mb-3">Python function bodies compiled into in-process tools (the agentic analog of ETL python_extensions). Receive <code>args</code> (dict), <code>return</code> a JSON-serializable result. Works for both agent_sdk and crewai. <span className="text-amber-700">Trusted authors only until the sandbox lands.</span></p>
-        <div className="space-y-3">
-          {localTools.map((t, i) => (
-            <div key={i} className="rounded-lg border border-slate-200 p-3">
-              <div className="flex items-center gap-2 mb-2">
-                <input className={inp + ' max-w-[180px]'} value={t.name} onChange={(e) => setTool(i, { name: e.target.value })} placeholder="tool name" />
-                <input className={inp} value={t.description} onChange={(e) => setTool(i, { description: e.target.value })} placeholder="description" />
-                <button onClick={() => removeTool(i)} className="text-slate-400 hover:text-red-600"><Trash2 className="h-4 w-4" /></button>
-              </div>
-              <textarea className={inp + ' h-24 font-mono text-xs'} value={t.code} onChange={(e) => setTool(i, { code: e.target.value })} placeholder={'import os, json, urllib.request\nreturn {"ok": True}'} />
-            </div>
-          ))}
-          {!localTools.length && <p className="text-xs text-slate-400">No inline tools. The agent can still use MCP servers above.</p>}
-        </div>
-      </section>
-
-      {/* Orchestration (teams only) — edge editor + visual graph */}
-      {isTeam && (
-        <section className="rounded-xl border border-slate-200 bg-white p-5 mb-5 shadow-sm">
-          <h2 className="font-semibold mb-3">Orchestration (team DAG)</h2>
-          <L label="Entry agent" className="max-w-xs mb-3">
-            <select className={inp} value={entry} onChange={(e) => setEntry(e.target.value)}>{crews.map((c) => <option key={c.id} value={c.id}>{c.id}</option>)}</select>
-          </L>
-          <div className="space-y-2 mb-4">
-            {edges.map((ed, i) => (
-              <div key={i} className="flex items-center gap-2">
-                <select className={inp + ' max-w-[160px]'} value={ed.from} onChange={(e) => setEdges((es) => es.map((x, j) => j === i ? { ...x, from: e.target.value } : x))}>{crews.map((c) => <option key={c.id} value={c.id}>{c.id}</option>)}</select>
-                <span className="text-slate-400">→</span>
-                <select className={inp + ' max-w-[160px]'} value={ed.to} onChange={(e) => setEdges((es) => es.map((x, j) => j === i ? { ...x, to: e.target.value } : x))}>{crews.map((c) => <option key={c.id} value={c.id}>{c.id}</option>)}</select>
-                <button onClick={() => setEdges((es) => es.filter((_, j) => j !== i))} className="text-slate-400 hover:text-red-600"><Trash2 className="h-4 w-4" /></button>
-              </div>
-            ))}
-            <button onClick={() => setEdges((es) => [...es, { from: crews[0]?.id, to: crews[crews.length - 1]?.id }])} className="inline-flex items-center gap-1 text-sm text-brand-700 hover:underline"><Plus className="h-4 w-4" /> Add edge</button>
-          </div>
-          <OrchestrationGraph crews={crews} entry={entry} edges={edges} />
-        </section>
-      )}
-
-      {/* Pricing */}
-      <section className="rounded-xl border border-slate-200 bg-white p-5 mb-5 shadow-sm">
-        <h2 className="font-semibold flex items-center gap-2 mb-3"><Tag className="h-4 w-4 text-brand-600" /> Pricing</h2>
-        <div className="grid sm:grid-cols-3 gap-3 items-end">
-          <L label="Price model" hint="How buyers pay: free, one-off, per run, or monthly subscription."><select className={inp} value={priceUnit} onChange={(e) => setPriceUnit(e.target.value)}>{PRICE_UNITS.map((u) => <option key={u} value={u}>{u.replace(/_/g, ' ')}</option>)}</select></L>
-          <L label="Price (€)" hint="What the buyer pays, in euro. Disabled when the model is free."><input className={inp} type="number" min="0" step="0.01" value={priceEur} onChange={(e) => setPriceEur(e.target.value)} disabled={priceUnit === 'free'} /></L>
-          <L label="Revenue share to you (%)" hint="Your cut of each sale; the platform keeps the rest."><input className={inp} type="number" min="0" max="100" value={revenueShare} onChange={(e) => setRevenueShare(e.target.value)} disabled={priceUnit === 'free'} /></L>
-        </div>
-        <label className="mt-3 flex items-center gap-2 text-sm text-slate-700">
-          <input type="checkbox" checked={isPaid ? true : locked} disabled={isPaid} onChange={(e) => setLocked(e.target.checked)} />
-          Locked clone (spec hidden; buyers configure variables only){isPaid && <span className="text-xs text-slate-400">— forced on for paid listings</span>}
-        </label>
-        <p className="text-xs text-slate-500 mt-1">Price is stored in cents (€{Number(priceEur || '0').toFixed(2)} → {Math.round(Number(priceEur || '0') * 100)} cents). Free + referenceable when €0.</p>
-      </section>
-
-      {/* spec preview + actions */}
-      <details className="rounded-xl border border-slate-200 bg-white p-5 mb-5 shadow-sm">
-        <summary className="cursor-pointer font-semibold text-sm">agent_definition (preview)</summary>
-        <pre className="text-xs bg-slate-50 border rounded p-3 mt-3 overflow-auto max-h-72">{JSON.stringify(agentDefinition, null, 2)}</pre>
-      </details>
-
-      <div className="flex items-center gap-3 flex-wrap">
-        <button onClick={saveDraft} disabled={!!busy} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50 disabled:opacity-50">
-          {busy === 'save' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save draft
+      {/* STUDIO (redesign 10-23, after Relevance AI / Copilot Studio / CrewAI): one section at a time from
+          the left nav instead of seven stacked cards, and a TEST panel on the right — talk to the agent and
+          see each step it takes. Publishing-only (Marketplace) and trading-only fields leave the main path. */}
+      <div className="sticky top-0 z-10 mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur">
+        <Bot className="h-5 w-5 text-brand-600" />
+        <span className="text-lg font-semibold text-slate-900">{displayName || code || 'New agent'}</span>
+        <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${status === 'draft' || status === 'new' ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>{status}</span>
+        {isTeam && <span className="inline-flex items-center gap-1 rounded-full bg-brand-50 px-2 py-0.5 text-xs font-medium text-brand-700"><Users className="h-3 w-3" /> Team · {crews.length}</span>}
+        {dirty && <span className="text-xs text-slate-500">unsaved changes</span>}
+        <span className="flex-1" />
+        <button onClick={() => setTestOpen((v) => !v)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
+          <MessageSquare className="h-4 w-4" /> {testOpen ? 'Hide test' : 'Test'}
         </button>
-        <button onClick={submitForApproval} disabled={!!busy} className="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50">
+        <button onClick={saveDraft} disabled={!!busy} className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium hover:bg-slate-50 disabled:opacity-50">
+          {busy === 'save' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save
+        </button>
+        <button onClick={submitForApproval} disabled={!!busy} className="inline-flex items-center gap-2 rounded-lg bg-brand-900 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-950 disabled:opacity-50"
+          title="Publish to the marketplace (a super_admin approves it)">
           {busy === 'submit' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Submit for approval
         </button>
-        <span className="text-xs text-slate-400">Team profiles are gated to Pro at install.</span>
+      </div>
+
+      <div className={`grid gap-4 ${testOpen ? 'lg:grid-cols-[210px_minmax(0,1fr)_400px]' : 'lg:grid-cols-[210px_minmax(0,1fr)]'}`}>
+        <nav className="space-y-1 lg:sticky lg:top-20 lg:self-start">
+          {SECTIONS.filter((x) => x.key !== 'team' || isTeam).map((x) => (
+            <button key={x.key} type="button" onClick={() => setSection(x.key)}
+              className={`flex w-full items-start gap-2.5 rounded-lg px-3 py-2 text-left transition ${section === x.key ? 'bg-brand-50 text-brand-900 ring-1 ring-brand-200' : 'text-slate-700 hover:bg-slate-100'}`}>
+              <x.icon className={`mt-0.5 h-4 w-4 shrink-0 ${section === x.key ? 'text-brand-600' : 'text-slate-400'}`} />
+              <span>
+                <span className="block text-sm font-semibold">{x.label}{x.key === 'agents' ? ` (${crews.length})` : x.key === 'variables' && variables.length ? ` (${variables.length})` : x.key === 'tools' && localTools.length ? ` (${localTools.length})` : ''}</span>
+                <span className="block text-xs leading-snug text-slate-500">{x.hint}</span>
+              </span>
+            </button>
+          ))}
+        </nav>
+
+        <div className="min-w-0 space-y-4">
+          {section === 'overview' && (<>
+            {/* Info */}
+            <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+              <h2 className="font-semibold mb-3">Info</h2>
+              <div className="grid sm:grid-cols-2 gap-3">
+                <L label="Code (kebab-case)" hint="The profile's unique id, lowercase-with-dashes. Used internally, not shown to buyers."><input className={inp} value={code} onChange={(e) => setCode(e.target.value)} placeholder="my-agent" /></L>
+                <L label="Display name" hint="The name people see in the marketplace and the chat picker."><input className={inp} value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="My Agent" /></L>
+                <L label="Version" hint="Bump it when you change the profile (e.g. 1.0.0 → 1.1.0)."><input className={inp} value={version} onChange={(e) => setVersion(e.target.value)} /></L>
+                <L label="Category" hint="Where the agent is grouped in the marketplace."><select className={inp} value={category} onChange={(e) => setCategory(e.target.value)}>{CATEGORIES.map((c) => <option key={c} value={c}>{c.replace(/_/g, ' ')}</option>)}</select></L>
+                <L label="Surface" hint="Where the agent runs: a chat persona users pick, a background batch (scheduled/triggered), or both."><select className={inp} value={surface} onChange={(e) => setSurface(e.target.value)} title="chat = persona selectable in the chat · background = CrewAI/Ray batch (schedule/trigger) · both">
+                  <option value="background">⚙ background (batch)</option>
+                  <option value="chat">💬 chat (persona)</option>
+                  <option value="both">both</option>
+                </select></L>
+                <L label="Tags (comma-sep)" hint="Keywords to find the agent in the marketplace. Comma-separated."><input className={inp} value={tags} onChange={(e) => setTags(e.target.value)} placeholder="etl, scraping" /></L>
+                <L label="Required capabilities (comma-sep)" hint="Platform features the agent needs to run — e.g. webrobot_mcp (the WebRobot tools), postiz_mcp (social publishing). A buyer whose plan lacks them can't install it. Leave empty if none. Comma-separated."><input className={inp} value={requiredCaps} onChange={(e) => setRequiredCaps(e.target.value)} placeholder="webrobot_mcp, postiz_mcp" /></L>
+              </div>
+              <L label="Description" className="mt-3" hint="One or two sentences on what this agent does — shown to buyers in the marketplace."><textarea className={inp + ' h-20'} value={description} onChange={(e) => setDescription(e.target.value)} /></L>
+            </section>
+
+          </>)}
+          {section === 'agents' && (<>
+            {/* Crews */}
+            <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="font-semibold">Crews <span className="text-xs font-normal text-slate-400">({crews.length} {crews.length === 1 ? 'agent' : 'agents'})</span></h2>
+                <div className="flex items-center gap-3">
+                  {/* EXPLICIT structure selector (decoupled from crew count). */}
+                  <div className="inline-flex rounded-md border border-slate-200 bg-white p-0.5 text-xs">
+                    {(['single', 'team'] as const).map((m) => (
+                      <button key={m} onClick={() => setMode(m)}
+                        className={`rounded px-2.5 py-1 font-medium transition ${mode === m ? 'bg-brand-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+                        title={m === 'single' ? 'Independent agent(s) — 1 single, N = personas (chat picker), no DAG' : 'Agents collaborate via an orchestration DAG (chat_mode: team)'}>
+                        {m === 'single' ? (crews.length > 1 ? 'Personas' : 'Single') : 'Team'}
+                      </button>
+                    ))}
+                  </div>
+                  <button onClick={addCrew} className="inline-flex items-center gap-1 text-sm text-brand-700 hover:underline"><Plus className="h-4 w-4" /> Add agent</button>
+                </div>
+              </div>
+              <div className="space-y-4">
+                {crews.map((c, i) => (
+                  <div key={i} className="rounded-lg border border-slate-200 p-3">
+                    <p className="mb-2 text-[11px] leading-snug text-slate-400">
+                      <b className="font-medium text-slate-500">id</b> = short name of this agent ·
+                      <b className="font-medium text-slate-500"> engine</b> = runtime (agent_sdk is the default tool-using agent) ·
+                      <b className="font-medium text-slate-500"> model</b> = the LLM. The system prompt below is the agent's instructions; the MCP url gives it a toolset.
+                    </p>
+                    <div className="flex items-center gap-2 mb-2">
+                      <input className={inp + ' max-w-[140px]'} value={c.id} onChange={(e) => setCrew(i, { id: e.target.value })} placeholder="id" title="Short unique name for this agent (e.g. researcher)" />
+                      <select className={inp + ' max-w-[130px]'} value={c.engine} onChange={(e) => setCrew(i, { engine: e.target.value })}>{ENGINES.map((en) => <option key={en} value={en}>{en}</option>)}</select>
+                      <input className={inp} value={c.model} onChange={(e) => setCrew(i, { model: e.target.value })} placeholder="model" />
+                      {crews.length > 1 && <button onClick={() => removeCrew(i)} className="text-slate-400 hover:text-red-600"><Trash2 className="h-4 w-4" /></button>}
+                    </div>
+                    <textarea className={inp + ' h-16 mb-2'} value={c.system_prompt} onChange={(e) => setCrew(i, { system_prompt: e.target.value })} placeholder="system prompt (use {{variable}} to inject declared variables)" />
+                    <input className={inp + ' mb-2'} value={c.mcp_url} onChange={(e) => setCrew(i, { mcp_url: e.target.value })} placeholder="MCP url (optional, e.g. https://mcp.webrobot.eu/mcp)" />
+
+                    {/* MCP integrati (con credenziali). Il webrobot full MCP sopra non chiede chiavi; questi
+                        SI (Postiz, ...). La chiave si salva in cloud_credentials (per org), l'header riferisce
+                        solo ${'${PROVIDER_API_KEY}'} — il segreto non entra mai nel profilo. */}
+                    {mcpIntegrations.length > 0 && (() => {
+                      const attached = mcpIntegrations.filter((ig) => crewServers(c).some((s) => s?.url === ig.mcpUrl));
+                      const available = mcpIntegrations.filter((ig) => !attached.some((a) => a.provider === ig.provider));
+                      return (
+                        <div className="mb-2 rounded-md border border-slate-200 bg-slate-50 p-2">
+                          <div className="mb-1 flex items-center gap-2">
+                            <span className="text-xs font-medium text-slate-600">Integration MCPs (with credentials)</span>
+                            {available.length > 0 && (
+                              <select
+                                className={inp + ' max-w-[220px] h-8 py-1'}
+                                value=""
+                                onChange={(e) => { const ig = mcpIntegrations.find((x) => x.provider === e.target.value); if (ig) attachIntegration(i, c, ig); }}
+                              >
+                                <option value="">+ add an integration…</option>
+                                {available.map((ig) => <option key={ig.provider} value={ig.provider}>{ig.label}</option>)}
+                              </select>
+                            )}
+                          </div>
+                          {attached.length === 0 && (
+                            <p className="text-[11px] leading-snug text-slate-400">
+                              External MCPs that need a key (e.g. Postiz). Add one, paste its API key, and Save —
+                              the key is stored securely for your organization, never in the profile.
+                            </p>
+                          )}
+                          {attached.map((ig) => {
+                            const k = `${i}:${ig.provider}`;
+                            return (
+                              <div key={ig.provider} className="mt-1 flex flex-wrap items-center gap-2 rounded border border-slate-200 bg-white p-2">
+                                <span className="text-xs font-medium text-slate-700">{ig.label}</span>
+                                <code className="rounded bg-slate-100 px-1 text-[10px] text-slate-500">${'{'}{ig.apiKeyEnv}{'}'}</code>
+                                <input
+                                  type="password"
+                                  className={inp + ' h-8 py-1 max-w-[220px]'}
+                                  placeholder={`${ig.provider} API key`}
+                                  value={intgKey[k] || ''}
+                                  onChange={(e) => setIntgKey((m) => ({ ...m, [k]: e.target.value }))}
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => saveIntegrationKey(i, ig)}
+                                  disabled={!(intgKey[k] || '').trim()}
+                                  className="rounded-md bg-slate-900 px-2.5 py-1 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+                                >
+                                  Save key
+                                </button>
+                                <button type="button" onClick={() => detachIntegration(i, c, ig)} className="text-slate-400 hover:text-red-600" title="Remove this integration"><Trash2 className="h-4 w-4" /></button>
+                                {intgMsg[k] && <span className="text-[11px] text-slate-500">{intgMsg[k]}</span>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
+                    {/* Runtime & safety — now editable in the form (previously YAML-only and silently dropped on edit). */}
+                    <div className="grid sm:grid-cols-2 gap-2">
+                      <L label="Permission mode" hint="How freely the agent acts (agent_sdk): default asks before sensitive actions; bypassPermissions runs unattended — use for background jobs."><select className={inp} value={c.permission_mode} onChange={(e) => setCrew(i, { permission_mode: e.target.value })}>{PERMISSION_MODES.map((p) => <option key={p} value={p}>{p || '(default)'}</option>)}</select></L>
+                      <L label="Max turns" hint="Hard cap on reasoning/tool steps in one run — stops a runaway agent. e.g. 20–40."><input className={inp} type="number" min="1" value={c.max_turns} onChange={(e) => setCrew(i, { max_turns: e.target.value })} placeholder="e.g. 20" /></L>
+                      <L label="Max budget (USD/turn)" hint="Spend ceiling per turn; the run stops if exceeded. Keeps costs bounded."><input className={inp} type="number" min="0" step="0.01" value={c.max_budget_usd} onChange={(e) => setCrew(i, { max_budget_usd: e.target.value })} placeholder="e.g. 0.50" /></L>
+                      <L label="Disallowed tools (comma-sep)" hint="Tools this agent must NOT use, even if its MCP exposes them (e.g. Bash). A safety fence. Comma-separated."><input className={inp} value={c.disallowed_tools} onChange={(e) => setCrew(i, { disallowed_tools: e.target.value })} placeholder="e.g. Bash, mcp__camoufox__agentic_browse" /></L>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+
+          </>)}
+          {section === 'team' && (<>
+            {/* Orchestration (teams only) — edge editor + visual graph */}
+            {isTeam && (
+              <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                <h2 className="font-semibold mb-3">Orchestration (team DAG)</h2>
+                <L label="Entry agent" className="max-w-xs mb-3">
+                  <select className={inp} value={entry} onChange={(e) => setEntry(e.target.value)}>{crews.map((c) => <option key={c.id} value={c.id}>{c.id}</option>)}</select>
+                </L>
+                <div className="space-y-2 mb-4">
+                  {edges.map((ed, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <select className={inp + ' max-w-[160px]'} value={ed.from} onChange={(e) => setEdges((es) => es.map((x, j) => j === i ? { ...x, from: e.target.value } : x))}>{crews.map((c) => <option key={c.id} value={c.id}>{c.id}</option>)}</select>
+                      <span className="text-slate-400">→</span>
+                      <select className={inp + ' max-w-[160px]'} value={ed.to} onChange={(e) => setEdges((es) => es.map((x, j) => j === i ? { ...x, to: e.target.value } : x))}>{crews.map((c) => <option key={c.id} value={c.id}>{c.id}</option>)}</select>
+                      <button onClick={() => setEdges((es) => es.filter((_, j) => j !== i))} className="text-slate-400 hover:text-red-600"><Trash2 className="h-4 w-4" /></button>
+                    </div>
+                  ))}
+                  <button onClick={() => setEdges((es) => [...es, { from: crews[0]?.id, to: crews[crews.length - 1]?.id }])} className="inline-flex items-center gap-1 text-sm text-brand-700 hover:underline"><Plus className="h-4 w-4" /> Add edge</button>
+                </div>
+                <OrchestrationGraph crews={crews} entry={entry} edges={edges} />
+              </section>
+            )}
+
+          </>)}
+          {section === 'tools' && (<>
+            {/* Inline local tools */}
+            <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex items-center justify-between mb-1">
+                <h2 className="font-semibold flex items-center gap-2"><Wrench className="h-4 w-4 text-brand-600" /> Local tools <span className="text-xs font-normal text-slate-400">(inline, no rebuild)</span></h2>
+                <button onClick={addTool} className="inline-flex items-center gap-1 text-sm text-brand-700 hover:underline"><Plus className="h-4 w-4" /> Add tool</button>
+              </div>
+              <p className="text-xs text-slate-500 mb-3">Python function bodies compiled into in-process tools (the agentic analog of ETL python_extensions). Receive <code>args</code> (dict), <code>return</code> a JSON-serializable result. Works for both agent_sdk and crewai. <span className="text-amber-700">Trusted authors only until the sandbox lands.</span></p>
+              <div className="space-y-3">
+                {localTools.map((t, i) => (
+                  <div key={i} className="rounded-lg border border-slate-200 p-3">
+                    <div className="flex items-center gap-2 mb-2">
+                      <input className={inp + ' max-w-[180px]'} value={t.name} onChange={(e) => setTool(i, { name: e.target.value })} placeholder="tool name" />
+                      <input className={inp} value={t.description} onChange={(e) => setTool(i, { description: e.target.value })} placeholder="description" />
+                      <button onClick={() => removeTool(i)} className="text-slate-400 hover:text-red-600"><Trash2 className="h-4 w-4" /></button>
+                    </div>
+                    <textarea className={inp + ' h-24 font-mono text-xs'} value={t.code} onChange={(e) => setTool(i, { code: e.target.value })} placeholder={'import os, json, urllib.request\nreturn {"ok": True}'} />
+                  </div>
+                ))}
+                {!localTools.length && <p className="text-xs text-slate-400">No inline tools. The agent can still use MCP servers above.</p>}
+              </div>
+            </section>
+
+          </>)}
+          {section === 'variables' && (<>
+            {/* Variables — the clone-wizard knobs */}
+            <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex items-center justify-between mb-1">
+                <h2 className="font-semibold flex items-center gap-2"><Variable className="h-4 w-4 text-brand-600" /> Variables</h2>
+                <button onClick={addVar} className="inline-flex items-center gap-1 text-sm text-brand-700 hover:underline"><Plus className="h-4 w-4" /> Add variable</button>
+              </div>
+              <p className="text-xs text-slate-500 mb-3">Configurable knobs the clone wizard renders. <b>bind</b>: <code>prompt</code> = {'{{name}}'} in the system prompt · <code>env</code> = read by local tools via <code>os.getenv</code> · <code>both</code>. Mark <b>secret</b> + set a <b>provider</b> to require a cloud credential (key resolved server-side, never stored).</p>
+              <div className="space-y-3">
+                {variables.map((v, i) => (
+                  <div key={i} className="rounded-lg border border-slate-200 p-3 grid sm:grid-cols-2 gap-2">
+                    <input className={inp} value={v.name} onChange={(e) => setVar(i, { name: e.target.value })} placeholder="name (e.g. basket)" />
+                    <input className={inp} value={v.label} onChange={(e) => setVar(i, { label: e.target.value })} placeholder="label" />
+                    <input className={inp} value={v.default} onChange={(e) => setVar(i, { default: e.target.value })} placeholder="default" disabled={v.secret} />
+                    <div className="flex items-center gap-2">
+                      <select className={inp + ' max-w-[110px]'} value={v.bind} onChange={(e) => setVar(i, { bind: e.target.value })} disabled={v.secret}>{BINDS.map((b) => <option key={b} value={b}>{b}</option>)}</select>
+                      <label className="flex items-center gap-1 text-xs text-slate-600 whitespace-nowrap"><input type="checkbox" checked={v.secret} onChange={(e) => setVar(i, { secret: e.target.checked })} /> secret</label>
+                      <button onClick={() => removeVar(i)} className="ml-auto text-slate-400 hover:text-red-600"><Trash2 className="h-4 w-4" /></button>
+                    </div>
+                    {v.secret && <input className={inp} value={v.provider} onChange={(e) => setVar(i, { provider: e.target.value })} placeholder="credential provider (e.g. postiz, binance)" />}
+                    <input className={inp} value={v.description} onChange={(e) => setVar(i, { description: e.target.value })} placeholder="description (shown in the wizard)" />
+                  </div>
+                ))}
+                {!variables.length && <p className="text-xs text-slate-400">No variables — the clone is fixed. Add some to make it configurable.</p>}
+              </div>
+            </section>
+
+          </>)}
+          {section === 'trading' && (<>
+            {/* Trading — bind the strategy-agent to a market (increment 1) */}
+            <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex items-center justify-between mb-1">
+                <h2 className="font-semibold flex items-center gap-2">📈 Trading</h2>
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={tradingEnabled} onChange={(e) => setTradingEnabled(e.target.checked)} /> Trading bot
+                </label>
+              </div>
+              <p className="text-xs text-slate-500 mb-3">The strategy stays an agent; these fields bind it to a market. The agent sets the weights on the <b>asset universe</b> — the Nautilus node converges to them.</p>
+              {tradingEnabled && (
+                <div className="space-y-3">
+                  <div className="inline-flex rounded-md border border-slate-200 bg-white p-0.5 text-xs">
+                    {TRADING_MODES.map((m) => (
+                      <button key={m.v} onClick={() => setTradingMode(m.v)}
+                        className={`rounded px-2.5 py-1 font-medium transition ${tradingMode === m.v ? 'bg-brand-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>
+                        {m.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    <L label="Tenant (org id) — empty = your org">
+                      <input className={inp} value={tradingOrgId} onChange={(e) => setTradingOrgId(e.target.value)} placeholder="super_admin: e.g. 5 (Screebits)" />
+                    </L>
+                    <div className="flex items-end text-[11px] pb-1">
+                      {allowedErr ? <span className="text-amber-700">{allowedErr}</span>
+                        : allowed && !allowed.enabled ? <span className="text-amber-700">Live trading is NOT enabled for this org — enable it in /dashboard/trading/limits.</span>
+                        : allowed ? <span className="text-emerald-700">✓ Trading enabled · {allowed.instruments.length} allowed instruments</span>
+                        : <span className="text-slate-400">loading allowed assets…</span>}
+                    </div>
+                  </div>
+                  <L label="Asset universe — the strategy monitors and allocates across these (select from the allow-list)">
+                    {allowed && allowed.instruments.length > 0 ? (
+                      <div className="flex flex-wrap gap-2">
+                        {allowed.instruments.map((sym) => {
+                          const on = universeSet.includes(sym);
+                          return (
+                            <button key={sym} type="button" onClick={() => toggleSym(sym)}
+                              className={`rounded-md border px-2.5 py-1 text-xs font-mono ${on ? 'border-brand-600 bg-brand-50 text-brand-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+                              {on ? '✓ ' : ''}{sym}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <input className={inp} value={universe} onChange={(e) => setUniverse(e.target.value)} placeholder="BTCUSDT.BINANCE, ETHUSDT.BINANCE" />
+                    )}
+                  </L>
+                  <div className="grid sm:grid-cols-3 gap-3">
+                    <L label="Venue"><select className={inp} value={venue} onChange={(e) => setVenue(e.target.value)}>{(allowed && allowed.venues.length ? allowed.venues : VENUES).map((v) => <option key={v}>{v}</option>)}</select></L>
+                    <L label="Bar interval"><select className={inp} value={barInterval} onChange={(e) => setBarInterval(e.target.value)}>{BAR_INTERVALS.map((b) => <option key={b}>{b}</option>)}</select></L>
+                    <L label="Exchange credentials"><input className={inp} value={tradingCredential} onChange={(e) => setTradingCredential(e.target.value)} placeholder="cloud_credential name" /></L>
+                  </div>
+                  <div className="grid sm:grid-cols-3 gap-3">
+                    <L label="Max exposure %"><input type="number" className={inp} value={maxExposurePct} onChange={(e) => setMaxExposurePct(e.target.value)} /></L>
+                    <L label="Max drawdown % (constraint)"><input type="number" className={inp} value={maxDrawdownPct} onChange={(e) => setMaxDrawdownPct(e.target.value)} /></L>
+                    <L label="Kill-switch"><span className="inline-flex items-center gap-2 text-sm h-9"><input type="checkbox" checked={killSwitch} onChange={(e) => setKillSwitch(e.target.checked)} /> enabled</span></L>
+                  </div>
+                  <p className="text-[11px] text-amber-700">⚠ Credentials must belong to the <b>end customer</b>, not fall back to the tenant. The guardrails (trading enabled, cap, allow-list) are enforced by the server.</p>
+                  <div className="flex items-center gap-3 pt-1">
+                    <button onClick={deployBot} disabled={busy === 'deploy' || !universe.trim()}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50">
+                      {busy === 'deploy' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Deploy bot
+                    </button>
+                    <span className="text-[11px] text-slate-500">Registers the strategy (kind: agentic) and starts the bot. A super_admin must act on behalf of a tenant.</span>
+                  </div>
+                </div>
+              )}
+            </section>
+
+          </>)}
+          {section === 'marketplace' && (<>
+            {/* Pricing */}
+            <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+              <h2 className="font-semibold flex items-center gap-2 mb-3"><Tag className="h-4 w-4 text-brand-600" /> Pricing</h2>
+              <div className="grid sm:grid-cols-3 gap-3 items-end">
+                <L label="Price model" hint="How buyers pay: free, one-off, per run, or monthly subscription."><select className={inp} value={priceUnit} onChange={(e) => setPriceUnit(e.target.value)}>{PRICE_UNITS.map((u) => <option key={u} value={u}>{u.replace(/_/g, ' ')}</option>)}</select></L>
+                <L label="Price (€)" hint="What the buyer pays, in euro. Disabled when the model is free."><input className={inp} type="number" min="0" step="0.01" value={priceEur} onChange={(e) => setPriceEur(e.target.value)} disabled={priceUnit === 'free'} /></L>
+                <L label="Revenue share to you (%)" hint="Your cut of each sale; the platform keeps the rest."><input className={inp} type="number" min="0" max="100" value={revenueShare} onChange={(e) => setRevenueShare(e.target.value)} disabled={priceUnit === 'free'} /></L>
+              </div>
+              <label className="mt-3 flex items-center gap-2 text-sm text-slate-700">
+                <input type="checkbox" checked={isPaid ? true : locked} disabled={isPaid} onChange={(e) => setLocked(e.target.checked)} />
+                Locked clone (spec hidden; buyers configure variables only){isPaid && <span className="text-xs text-slate-400">— forced on for paid listings</span>}
+              </label>
+              <p className="text-xs text-slate-500 mt-1">Price is stored in cents (€{Number(priceEur || '0').toFixed(2)} → {Math.round(Number(priceEur || '0') * 100)} cents). Free + referenceable when €0.</p>
+            </section>
+
+          </>)}
+          {section === 'definition' && (<>
+            {/* spec preview + actions */}
+            <details open className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+              <summary className="cursor-pointer font-semibold text-sm">agent_definition (preview)</summary>
+              <pre className="text-xs bg-slate-50 border rounded p-3 mt-3 overflow-auto max-h-72">{JSON.stringify(agentDefinition, null, 2)}</pre>
+            </details>
+
+          </>)}
+        </div>
+
+        {testOpen && <div className="lg:sticky lg:top-20 lg:self-start lg:h-[calc(100vh-7rem)]"><TestPanel profileId={savedId != null ? String(savedId) : null} dirty={dirty} /></div>}
       </div>
     </div>
   );

@@ -152,6 +152,41 @@ export async function startAgentDesignerRun(goal: string, currentSpec = '{}'): P
   return call<AgentRun>('POST', '/api/agentic/start', { profileId, inputs: { goal, current_spec: currentSpec } });
 }
 
+/**
+ * TEST a profile from the studio's test panel: a real run of THAT profile with the person's message as
+ * the goal. Same endpoint as any run — it is billed and traced like one.
+ */
+export const startAgentTestRun = (profileId: string | number, message: string) =>
+  call<AgentRun>('POST', '/api/agentic/start', { profileId: Number(profileId), inputs: { goal: message } });
+
+/** The run's log (Ray job / runner pod), from which the test panel reads the AGENTIC-TRACE steps. */
+export const getAgentRunLogs = (executionId: string, tail = 600) =>
+  call<{ logs?: string; lineCount?: number; error?: string }>('GET', `/api/agentic/${encodeURIComponent(executionId)}/logs?tail=${tail}`);
+
+/** One step of a run, parsed from an `AGENTIC-TRACE [<eid> node=<n>] <arrow> …` log line. */
+export interface TraceStep { node: string; kind: 'call' | 'result' | 'text'; label: string; detail: string }
+
+export function parseAgentTrace(logs: string | null | undefined): TraceStep[] {
+  const out: TraceStep[] = [];
+  for (const raw of String(logs || '').split('\n')) {
+    const m = raw.match(/AGENTIC-TRACE \[[^\]]*?node=([^\]\s]+)\]\s*(→|←|💬)\s*(.*)$/);
+    if (!m) continue;
+    const [, node, arrow, rest] = m;
+    if (arrow === '→') {
+      const t = rest.match(/^([\w.:-]+)\((.*)\)?\s*$/s);
+      out.push({ node, kind: 'call', label: (t ? t[1] : rest.split('(')[0]).replace(/^mcp__\w+?__/, ''), detail: (t ? t[2] : rest).replace(/\)\s*$/, '') });
+    } else if (arrow === '←') {
+      out.push({ node, kind: 'result', label: /error|Error|HTTP [45]\d\d/.test(rest.slice(0, 200)) ? 'error' : 'result', detail: rest });
+    } else {
+      out.push({ node, kind: 'text', label: 'says', detail: rest });
+    }
+  }
+  return out;
+}
+
+/** The answer text of a finished run (first non-empty string in the result). */
+export function agentRunText(result: any): string | null { return resultToText(result); }
+
 export const getAgentRunStatus = (executionId: string) =>
   call<any>('GET', `/api/agentic/${encodeURIComponent(executionId)}`);
 
