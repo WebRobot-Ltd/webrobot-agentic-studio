@@ -1074,7 +1074,13 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
                 {teamKind === 'chain' ? (<>
                 <div className="mb-3 flex items-center justify-between">
                   <h2 className="font-semibold">Team graph</h2>
-                  <span className="text-xs text-slate-500">{crews.length} agents · {edges.length} hand-offs · entry <b>{entry}</b></span>
+                  <span className="flex items-center gap-3">
+                    <span className="text-xs text-slate-500">{crews.length} agents · {edges.length} hand-offs · entry <b>{entry}</b></span>
+                    <button type="button" onClick={addCrew}
+                      className="inline-flex items-center gap-1 rounded-lg border border-brand-200 bg-brand-50 px-2.5 py-1 text-sm font-medium text-brand-800 hover:bg-brand-100">
+                      <Plus className="h-4 w-4" /> Add agent
+                    </button>
+                  </span>
                 </div>
                 <OrchestrationGraph
                   crews={crews} entry={entry} edges={edges}
@@ -1119,6 +1125,10 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
                                 className="w-14 rounded border border-slate-200 px-1.5 py-0.5 text-sm" />
                             </div>
                           ))}
+                          <button type="button" onClick={addCrew} title="Add a member to the swarm"
+                            className="inline-flex items-center gap-1 rounded-lg border border-dashed border-brand-300 bg-white px-2.5 py-1.5 text-sm font-medium text-brand-700 hover:bg-brand-50">
+                            <Plus className="h-4 w-4" /> Add agent
+                          </button>
                         </div>
                       </div>
                       <span className="text-2xl text-slate-300" aria-hidden="true">→</span>
