@@ -41,7 +41,7 @@ const DRAFT_CTX = 'agentic:agent-studio';
 // most agents are never sold and never trade.
 const SECTIONS = [
   { key: 'agents', label: 'Agents', hint: 'Instructions, model, tools', icon: Bot },
-  { key: 'team', label: 'Team', hint: 'Who hands off to whom', icon: Network },
+  { key: 'team', label: 'Team', hint: 'Chain of hand-offs or swarm', icon: Network },
   { key: 'overview', label: 'Overview', hint: 'Name, surface, description', icon: Info },
   { key: 'tools', label: 'Local tools', hint: 'Inline Python tools', icon: Wrench },
   { key: 'variables', label: 'Variables', hint: 'Knobs buyers configure', icon: Variable },
@@ -208,6 +208,13 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
   ]);
   const [entry, setEntry] = useState('agent');
   const [edges, setEdges] = useState<Edge[]>([]);
+  // Team kind (10-23): a CHAIN of hand-offs (orchestration dag) or a SWARM — agents working in parallel on a
+  // shared workspace + task board (orchestration swarm: replicas per crew, seed tasks, optional lead).
+  const [teamKind, setTeamKind] = useState<'chain' | 'swarm'>('chain');
+  const [swarmReplicas, setSwarmReplicas] = useState<Record<string, number>>({});
+  const [swarmLead, setSwarmLead] = useState('');
+  const [seedTasks, setSeedTasks] = useState('');
+  const [swarmMaxMin, setSwarmMaxMin] = useState('30');
   const [requiredCaps, setRequiredCaps] = useState('webrobot_mcp');
   const [variables, setVariables] = useState<VarDecl[]>([]);
   const [localTools, setLocalTools] = useState<LocalTool[]>([]);
@@ -327,6 +334,18 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
     if (cs.length) setCrews(cs);
     setEntry(def.orchestration?.entry || cs[0]?.id || 'agent');
     setEdges(def.orchestration?.edges || []);
+    const orch = def.orchestration || {};
+    if (orch.type === 'swarm') {
+      setTeamKind('swarm');
+      const rep: Record<string, number> = {};
+      for (const a of orch.agents || []) if (a?.crew) rep[a.crew] = Number(a.replicas || 1);
+      setSwarmReplicas(rep);
+      setSwarmLead(orch.lead || '');
+      setSeedTasks(Array.isArray(orch.seed_tasks) ? orch.seed_tasks.join('\n') : '');
+      setSwarmMaxMin(orch.max_seconds ? String(Math.round(Number(orch.max_seconds) / 60)) : '30');
+    } else {
+      setTeamKind('chain');
+    }
     // variables / local_tools live on the crew node (authored profile-wide).
     const c0 = (def.crews || [])[0] || {};
     if (Array.isArray(c0.variables)) setVariables(c0.variables.map((v: any) => ({
@@ -417,12 +436,20 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
       // {entry, edges} left it empty, and its emptiness check compares len(order) to len(nodes)
       // — 0 to 0 — so a studio-authored team RAN, reported SUCCEEDED and executed no agent at
       // all. One node per crew, id == crew id, which is what these edges already reference.
-      def.orchestration = {
-        type: 'dag',
-        entry,
-        nodes: crews.map((c: any) => ({ id: c.id, crew: c.id })),
-        edges,
-      };
+      def.orchestration = teamKind === 'swarm'
+        ? {
+            type: 'swarm',
+            agents: crews.filter((c: any) => c.id !== swarmLead).map((c: any) => ({ crew: c.id, replicas: Math.max(1, Number(swarmReplicas[c.id] || 1)) })),
+            ...(seedTasks.trim() ? { seed_tasks: seedTasks.split('\n').map((t) => t.trim()).filter(Boolean) } : {}),
+            ...(swarmLead ? { lead: swarmLead } : {}),
+            max_seconds: Math.max(60, Math.round(Number(swarmMaxMin || '30') * 60)),
+          }
+        : {
+            type: 'dag',
+            entry,
+            nodes: crews.map((c: any) => ({ id: c.id, crew: c.id })),
+            edges,
+          };
     }
     if (tradingEnabled) {
       // The strategy stays purely agentic; this block only BINDS it to trading (universe/venue/
@@ -443,7 +470,7 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
       };
     }
     return def;
-  }, [code, crews, isTeam, entry, edges, declaredVars, declaredTools,
+  }, [code, crews, isTeam, entry, edges, teamKind, swarmReplicas, swarmLead, seedTasks, swarmMaxMin, declaredVars, declaredTools,
       tradingEnabled, tradingMode, venue, universe, barInterval, tradingCredential,
       maxExposurePct, maxDrawdownPct, killSwitch]);
   useEffect(() => {
@@ -1003,6 +1030,21 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
             {/* Orchestration (teams only) — edge editor + visual graph */}
             {isTeam && (
               <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="mb-4 flex flex-wrap items-center gap-3">
+                  <h2 className="font-semibold">How the team works</h2>
+                  <div className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5 text-sm">
+                    {([['chain', 'Chain — hand-offs'], ['swarm', 'Swarm — shared workspace']] as const).map(([k, l]) => (
+                      <button key={k} type="button" onClick={() => setTeamKind(k)}
+                        className={`rounded-md px-3 py-1 font-medium ${teamKind === k ? 'bg-brand-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}>{l}</button>
+                    ))}
+                  </div>
+                </div>
+                <p className="mb-4 text-sm text-slate-600">
+                  {teamKind === 'chain'
+                    ? 'Each agent works in turn and passes its result to the next — the arrows. Use it when the steps depend on each other.'
+                    : 'Several agents work AT THE SAME TIME on one goal: they take tasks from a shared board, write what they find to a shared workspace and post new leads for the others. Use it for wide work (many sources, many items).'}
+                </p>
+                {teamKind === 'chain' ? (<>
                 <div className="mb-3 flex items-center justify-between">
                   <h2 className="font-semibold">Team graph</h2>
                   <span className="text-xs text-slate-500">{crews.length} agents · {edges.length} hand-offs · entry <b>{entry}</b></span>
@@ -1033,6 +1075,46 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
                 </div>
                   </div>
                 </details>
+                </>) : (
+                  <div>
+                    {/* The swarm as a group: members (×replicas) around the shared board/workspace, then the lead. */}
+                    <div className="flex flex-wrap items-center gap-4 rounded-xl border border-slate-200 bg-slate-50 p-4">
+                      <div className="flex-1 rounded-xl border-2 border-dashed border-brand-300 bg-white p-3">
+                        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-brand-700">Swarm · shared workspace + task board</p>
+                        <div className="flex flex-wrap gap-2">
+                          {crews.filter((c) => c.id !== swarmLead).map((c) => (
+                            <div key={c.id} className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 shadow-sm">
+                              <button type="button" onClick={() => openAgent(c.id)} className="font-mono text-sm font-semibold text-slate-900 hover:underline">{c.id}</button>
+                              <span className="text-xs text-slate-500">×</span>
+                              <input type="number" min={1} max={20} value={swarmReplicas[c.id] || 1}
+                                onChange={(e) => setSwarmReplicas((r) => ({ ...r, [c.id]: Math.max(1, Math.min(20, Number(e.target.value) || 1)) }))}
+                                title="How many copies of this agent work in parallel"
+                                className="w-14 rounded border border-slate-200 px-1.5 py-0.5 text-sm" />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      <span className="text-2xl text-slate-300" aria-hidden="true">→</span>
+                      <div className="rounded-xl border border-slate-200 bg-white p-3">
+                        <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Lead (optional)</p>
+                        <select className={inp + ' max-w-[200px]'} value={swarmLead} onChange={(e) => setSwarmLead(e.target.value)}
+                          title="Reads the whole workspace at the end and writes the team's answer">
+                          <option value="">— none: the workspace summary —</option>
+                          {crews.map((c) => <option key={c.id} value={c.id}>{c.id}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_180px]">
+                      <L label="First tasks on the board (one per line)" hint="What the swarm starts from — e.g. one line per source or per item. {goal} and the run inputs can be used. Empty = the run's goal as a single task; the agents post new tasks as they find leads.">
+                        <textarea className={inp + ' h-28 font-mono text-xs'} value={seedTasks} onChange={(e) => setSeedTasks(e.target.value)} placeholder={'Collect the reviews of {goal} on site A\nCollect the reviews of {goal} on site B'} />
+                      </L>
+                      <L label="Time limit (minutes)" hint="The swarm stops when the board is empty and everyone is idle, or at this limit.">
+                        <input type="number" min={1} className={inp} value={swarmMaxMin} onChange={(e) => setSwarmMaxMin(e.target.value)} />
+                      </L>
+                    </div>
+                    <p className="mt-3 text-xs text-slate-500">Members need the agent_sdk engine. Total parallel agents: {crews.filter((c) => c.id !== swarmLead).reduce((n, c) => n + (swarmReplicas[c.id] || 1), 0)}.</p>
+                  </div>
+                )}
               </section>
             )}
 
