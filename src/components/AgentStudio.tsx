@@ -110,25 +110,80 @@ export interface AgentStudioProps {
 }
 
 // Module-scope so React Flow + the form inputs don't remount on each render.
-function OrchestrationGraph({ crews, entry, edges }: { crews: Crew[]; entry: string; edges: Edge[] }) {
-  const nodes: Node[] = crews.map((c, i) => ({
-    id: c.id || `n${i}`,
-    position: { x: (i % 3) * 220, y: Math.floor(i / 3) * 130 },
-    data: { label: `${c.id}${c.id === entry ? '  ▶ entry' : ''}  ·  ${c.engine}` },
-    style: {
-      border: c.id === entry ? '2px solid #7c3aed' : '1px solid #cbd5e1',
-      borderRadius: 8, padding: 8, fontSize: 12, background: '#fff', width: 180,
-    },
-  }));
+function OrchestrationGraph({ crews, entry, edges, onConnectEdge, onRemoveEdge, onSetEntry, onOpenAgent }: {
+  crews: Crew[]; entry: string; edges: Edge[];
+  onConnectEdge?: (from: string, to: string) => void;
+  onRemoveEdge?: (from: string, to: string) => void;
+  onSetEntry?: (id: string) => void;
+  onOpenAgent?: (id: string) => void;
+}) {
+  // EDITABLE team graph (redesign 10-23, after CrewAI Crew Studio): drag from one agent to another to add a
+  // hand-off, double-click an arrow to remove it, click an agent to make it the entry, double-click to open
+  // its settings. Positions are kept while the page is open; the spec stores only the edges.
+  const [pos, setPos] = useState<Record<string, { x: number; y: number }>>({});
+  const [selected, setSelected] = useState<string | null>(null);
+  const nodes: Node[] = crews.map((c, i) => {
+    const id = c.id || `n${i}`;
+    const isEntry = id === entry;
+    return {
+      id,
+      position: pos[id] || { x: (i % 3) * 250, y: Math.floor(i / 3) * 150 },
+      data: {
+        label: (
+          <div className="text-left">
+            <div className="flex items-center gap-1.5 text-[13px] font-semibold text-slate-900">
+              <span className="truncate">{id}</span>
+              {isEntry && <span className="rounded bg-brand-600 px-1 text-[10px] font-semibold text-white">entry</span>}
+            </div>
+            <div className="mt-0.5 truncate text-[11px] text-slate-500">{c.model || 'model?'} · {c.engine}</div>
+            <div className="mt-1 line-clamp-2 text-[11px] leading-snug text-slate-600">{c.system_prompt || <i className="text-slate-400">no instructions yet</i>}</div>
+          </div>
+        ),
+      },
+      style: {
+        border: isEntry ? '2px solid var(--color-brand-600, #4f46e5)' : selected === id ? '2px solid #94a3b8' : '1px solid #cbd5e1',
+        borderRadius: 10, padding: 10, background: '#fff', width: 210, boxShadow: '0 1px 2px rgba(0,0,0,.06)',
+      },
+    };
+  });
   const fedges: FlowEdge[] = edges
     .filter((x) => x.from && x.to)
-    .map((x, i) => ({ id: `e${i}`, source: x.from, target: x.to, animated: true }));
+    .map((x, i) => ({ id: `e${i}-${x.from}-${x.to}`, source: x.from, target: x.to, animated: true, data: { from: x.from, to: x.to } }));
+  const editable = !!onConnectEdge;
   return (
-    <div style={{ height: 300 }} className="rounded-lg border border-slate-200 bg-slate-50">
-      <ReactFlow nodes={nodes} edges={fedges} fitView nodesDraggable nodesConnectable={false} elementsSelectable={false} proOptions={{ hideAttribution: true }}>
-        <Background />
-        <Controls showInteractive={false} />
-      </ReactFlow>
+    <div>
+      <div style={{ height: 420 }} className="rounded-lg border border-slate-200 bg-slate-50">
+        <ReactFlow
+          nodes={nodes} edges={fedges} fitView proOptions={{ hideAttribution: true }}
+          nodesDraggable nodesConnectable={editable} elementsSelectable={editable}
+          onNodesChange={(chs) => chs.forEach((ch: any) => {
+            if (ch.type === 'position' && ch.position) setPos((p) => ({ ...p, [ch.id]: ch.position }));
+          })}
+          onConnect={(c) => { if (c.source && c.target && c.source !== c.target) onConnectEdge?.(c.source, c.target); }}
+          onEdgeDoubleClick={(_, e) => onRemoveEdge?.(String(e.source), String(e.target))}
+          onNodeClick={(_, n) => setSelected(String(n.id))}
+          onNodeDoubleClick={(_, n) => onOpenAgent?.(String(n.id))}
+          onPaneClick={() => setSelected(null)}
+        >
+          <Background />
+          <Controls showInteractive={false} />
+        </ReactFlow>
+      </div>
+      {editable && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-slate-600">
+          {selected ? (
+            <>
+              <span>Selected: <b className="text-slate-900">{selected}</b></span>
+              {selected !== entry && (
+                <button type="button" onClick={() => onSetEntry?.(selected)} className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-sm font-medium hover:bg-slate-50">Set as entry</button>
+              )}
+              <button type="button" onClick={() => onOpenAgent?.(selected)} className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-sm font-medium hover:bg-slate-50">Open settings</button>
+            </>
+          ) : (
+            <span>Drag from one agent's edge to another to add a hand-off · double-click an arrow to remove it · click an agent to select it, double-click to open its settings.</span>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -209,6 +264,10 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const [section, setSection] = useState<string>('agents');
   const [testOpen, setTestOpen] = useState(true);
+  const openAgent = (id: string) => {
+    setSection('agents');
+    setTimeout(() => document.getElementById(`crew-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
+  };
   // The spec as last saved/loaded: the test panel runs the SAVED profile, so it warns on unsaved edits.
   const [savedSpec, setSavedSpec] = useState<string | null>(null);
   const markSaved = useRef(false);
@@ -608,6 +667,30 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
           una riga (l'agente progettista webrobot-agent-designer propone) o conversare (chatSlot) — in una
           sola testata. Prima erano una fascia blu e, sotto, un riquadro "Start here": il nuovo utente
           leggeva due intestazioni prima di trovare il campo. Il form tecnico resta sotto, invariato. */}
+      {editId ? (
+        // Editing an existing agent: the describe-to-change bar, compact — the studio below is the work area.
+        <div className="mb-4 rounded-xl border border-brand-200 bg-brand-50 p-3">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <Sparkles className="hidden h-5 w-5 shrink-0 text-brand-600 sm:block" />
+            <input
+              className="min-w-0 flex-1 rounded-lg border border-brand-200 bg-white px-3 py-2.5 text-base text-slate-900 outline-none placeholder:text-slate-400 focus:border-brand-400"
+              placeholder="Describe a change — e.g. “add a reviewer agent that checks the report before it is sent”"
+              value={askText}
+              onChange={(e) => setAskText(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') askForAgent(); }}
+              disabled={generating}
+            />
+            <button type="button" onClick={askForAgent} disabled={generating || !askText.trim()}
+              className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-brand-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-brand-950 disabled:opacity-50">
+              {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+              {generating ? 'Designing…' : 'Propose change'}
+            </button>
+            {chatSlot && <div className="shrink-0">{chatSlot}</div>}
+          </div>
+          {askPhase && !askErr && <p className="mt-2 text-sm text-slate-700">{askPhase}</p>}
+          {askErr && <p className="mt-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-900">{askErr}</p>}
+        </div>
+      ) : (
       <section className="relative mb-6 overflow-hidden rounded-2xl bg-gradient-to-br from-brand-950 via-brand-900 to-brand-700 p-6 text-white shadow-lg sm:p-8">
         <div aria-hidden="true" className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-brand-400/25 blur-3xl" />
         <div className="absolute -right-8 -top-10 opacity-10" aria-hidden="true"><Bot className="h-40 w-40" /></div>
@@ -648,8 +731,8 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
             </button>
           </div>
           {chatSlot && <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-blue-100">or {chatSlot}</div>}
-          {askPhase && !askErr && <p className="mt-2 text-xs text-blue-100">{askPhase}</p>}
-          {askErr && <p className="mt-2 rounded-md bg-rose-50 px-2 py-1 text-xs text-rose-700">{askErr}</p>}
+          {askPhase && !askErr && <p className="mt-2 text-sm text-blue-100">{askPhase}</p>}
+          {askErr && <p className="mt-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-900">{askErr}</p>}
           {/* Partenze concrete solo per un profilo nuovo e finche' il campo e' vuoto. */}
           {!editId && !askText.trim() && !generating && !proposal && (
             <div className="mt-6">
@@ -671,12 +754,13 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
           )}
         </div>
       </section>
+      )}
 
       {/* La proposta dell'agente progettista: non applicata da sola, si vede e si decide. */}
       {proposal && (
         <div className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm font-semibold text-emerald-900">
+            <span className="text-base font-semibold text-emerald-900">
               🤖 Proposed {proposal.chat_mode === 'team' ? `team of ${(proposal.crews || []).length} agents` : 'agent'}
             </span>
             {(proposal.display_name || proposal.profile) && (
@@ -691,17 +775,17 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
             )}
             <span className="flex-1" />
             <button type="button" onClick={applyProposal}
-              className="rounded-md bg-emerald-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-emerald-700">
+              className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700">
               Apply to the form
             </button>
             <button type="button" onClick={discardProposal}
-              className="rounded-md px-2.5 py-1 text-xs text-slate-500 hover:bg-white">
+              className="rounded-md px-3 py-1.5 text-sm text-slate-600 hover:bg-white">
               Discard
             </button>
           </div>
-          {proposal.description && <p className="mt-1 text-xs text-emerald-800">{proposal.description}</p>}
+          {proposal.description && <p className="mt-1 text-sm text-emerald-900">{proposal.description}</p>}
           <details className="mt-2">
-            <summary className="cursor-pointer text-xs text-emerald-700">See the proposed definition</summary>
+            <summary className="cursor-pointer text-sm text-emerald-800">See the proposed definition</summary>
             <pre className="mt-2 max-h-64 overflow-auto rounded-md border border-emerald-200 bg-white p-2 text-[11px] leading-snug">{JSON.stringify(proposal, null, 2)}</pre>
           </details>
         </div>
@@ -790,7 +874,7 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
               </div>
               <div className="space-y-4">
                 {crews.map((c, i) => (
-                  <div key={i} className="rounded-lg border border-slate-200 p-3">
+                  <div key={i} id={`crew-${c.id}`} className="scroll-mt-24 rounded-lg border border-slate-200 p-3">
                     <p className="mb-2 text-[11px] leading-snug text-slate-400">
                       <b className="font-medium text-slate-500">id</b> = short name of this agent ·
                       <b className="font-medium text-slate-500"> engine</b> = runtime (agent_sdk is the default tool-using agent) ·
@@ -878,7 +962,20 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
             {/* Orchestration (teams only) — edge editor + visual graph */}
             {isTeam && (
               <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-                <h2 className="font-semibold mb-3">Orchestration (team DAG)</h2>
+                <div className="mb-3 flex items-center justify-between">
+                  <h2 className="font-semibold">Team graph</h2>
+                  <span className="text-xs text-slate-500">{crews.length} agents · {edges.length} hand-offs · entry <b>{entry}</b></span>
+                </div>
+                <OrchestrationGraph
+                  crews={crews} entry={entry} edges={edges}
+                  onConnectEdge={(from, to) => setEdges((es) => es.some((x) => x.from === from && x.to === to) ? es : [...es, { from, to }])}
+                  onRemoveEdge={(from, to) => setEdges((es) => es.filter((x) => !(x.from === from && x.to === to)))}
+                  onSetEntry={(id) => setEntry(id)}
+                  onOpenAgent={openAgent}
+                />
+                <details className="mt-4">
+                  <summary className="cursor-pointer text-sm font-medium text-slate-600">Edit as a list</summary>
+                  <div className="mt-3">
                 <L label="Entry agent" className="max-w-xs mb-3">
                   <select className={inp} value={entry} onChange={(e) => setEntry(e.target.value)}>{crews.map((c) => <option key={c.id} value={c.id}>{c.id}</option>)}</select>
                 </L>
@@ -893,7 +990,8 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
                   ))}
                   <button onClick={() => setEdges((es) => [...es, { from: crews[0]?.id, to: crews[crews.length - 1]?.id }])} className="inline-flex items-center gap-1 text-sm text-brand-700 hover:underline"><Plus className="h-4 w-4" /> Add edge</button>
                 </div>
-                <OrchestrationGraph crews={crews} entry={entry} edges={edges} />
+                  </div>
+                </details>
               </section>
             )}
 
