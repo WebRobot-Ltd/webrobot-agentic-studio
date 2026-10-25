@@ -388,6 +388,11 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
 
   // Ramo "descrivi il team -> l'agente lo progetta" (parita' col pipeline designer).
   const [askText, setAskText] = useState('');
+  // The designer asked a question instead of proposing (NEEDS): show it with a box to answer, and
+  // re-run with the request + the answer (user 10-25: "there should be an interface to reply").
+  const [needs, setNeeds] = useState<{ question: string; prompt: string } | null>(null);
+  const [needsAnswer, setNeedsAnswer] = useState('');
+  const lastPrompt = useRef('');
   const [generating, setGenerating] = useState(false);
   const [askPhase, setAskPhase] = useState<string | null>(null);
   const [askErr, setAskErr] = useState<string | null>(null);
@@ -592,7 +597,7 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
       }
       scartaRun(runCtx);
       if (esito.kind === 'ended') { setAskErr(`The agent run ended as ${esito.status}.`); return; }
-      if (esito.kind === 'needs') { setAskErr(`The agent needs more detail: ${esito.question}`); return; }
+      if (esito.kind === 'needs') { setNeeds({ question: esito.question, prompt: lastPrompt.current || askText }); setNeedsAnswer(''); return; }
       if (esito.kind === 'empty') {
         setAskErr('The agent finished without a usable profile — try describing the agent and what it should do more concretely.');
         return;
@@ -604,9 +609,11 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
     } finally { setGenerating(false); setAskPhase(null); }
   }, [runCtx]);
 
-  const askForAgent = useCallback(async () => {
-    const prompt = askText.trim();
+  const askForAgent = useCallback(async (override?: string) => {
+    const prompt = (typeof override === 'string' ? override : askText).trim();
     if (!prompt) return;
+    lastPrompt.current = prompt;
+    setNeeds(null);
     setAskErr(null); setProposal(null); setGenerating(true); setAskPhase('Starting the designer agent…');
     let eid: string | undefined;
     try {
@@ -623,6 +630,30 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
     salvaRun(runCtx, { executionId: eid, prompt, startedAt: Date.now() });   // ricorda PRIMA di attendere
     await seguiRun(eid);
   }, [askText, crews, agentDefinition, runCtx, seguiRun]);
+
+  /** The designer's question with a box to answer it; Send re-runs with the request + the answer. */
+  const renderNeeds = () => needs && (
+    <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-slate-800">
+      <p className="font-semibold text-amber-900">The designer needs one more detail</p>
+      <p className="mt-1 whitespace-pre-line">{needs.question}</p>
+      <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+        <textarea className="min-h-[60px] flex-1 rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-amber-400"
+          placeholder="Your answer" value={needsAnswer} onChange={(e) => setNeedsAnswer(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && needsAnswer.trim()) sendNeedsAnswer(); }} />
+        <div className="flex shrink-0 gap-2 sm:flex-col">
+          <button type="button" onClick={sendNeedsAnswer} disabled={generating || !needsAnswer.trim()}
+            className="rounded-lg bg-brand-900 px-4 py-2 text-sm font-semibold text-white hover:bg-brand-950 disabled:opacity-50">Send</button>
+          <button type="button" onClick={() => setNeeds(null)} className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50">Dismiss</button>
+        </div>
+      </div>
+    </div>
+  );
+  const sendNeedsAnswer = () => {
+    if (!needs || !needsAnswer.trim()) return;
+    const next = `${needs.prompt}\n\nYou asked: ${needs.question}\nAnswer: ${needsAnswer.trim()}`;
+    setAskText(next);
+    askForAgent(next);
+  };
 
   // updatedAt dell'ultimo draft gia' consumato/scartato: senza, il polling lo riproporrebbe subito.
   const draftSeen = useRef<string | null>(null);
@@ -812,7 +843,7 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
               onKeyDown={(e) => { if (e.key === 'Enter') askForAgent(); }}
               disabled={generating}
             />
-            <button type="button" onClick={askForAgent} disabled={generating || !askText.trim()}
+            <button type="button" onClick={() => askForAgent()} disabled={generating || !askText.trim()}
               className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-brand-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-brand-950 disabled:opacity-50">
               {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
               {generating ? 'Designing…' : 'Propose change'}
@@ -821,6 +852,7 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
           </div>
           {askPhase && !askErr && <p className="mt-2 text-sm text-slate-700">{askPhase}</p>}
           {askErr && <p className="mt-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-900">{askErr}</p>}
+          {renderNeeds()}
         </div>
       ) : (
       <section className="relative mb-6 overflow-hidden rounded-2xl bg-gradient-to-br from-brand-950 via-brand-900 to-brand-700 p-6 text-white shadow-lg sm:p-8">
@@ -853,7 +885,7 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
             />
             <button
               type="button"
-              onClick={askForAgent}
+              onClick={() => askForAgent()}
               disabled={generating || !askText.trim()}
               className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg bg-brand-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-brand-950 disabled:opacity-50"
               title="Design an agent from this description — you review it before anything changes"
@@ -865,6 +897,7 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
           {chatSlot && <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-blue-100">or {chatSlot}</div>}
           {askPhase && !askErr && <p className="mt-2 text-sm text-blue-100">{askPhase}</p>}
           {askErr && <p className="mt-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-900">{askErr}</p>}
+          {renderNeeds()}
           {/* Partenze concrete solo per un profilo nuovo e finche' il campo e' vuoto. */}
           {!editId && !askText.trim() && !generating && !proposal && (
             <div className="mt-6">
