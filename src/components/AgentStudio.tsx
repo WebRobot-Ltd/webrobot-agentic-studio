@@ -449,6 +449,12 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
       setSwarmMaxMin(orch.max_seconds ? String(Math.round(Number(orch.max_seconds) / 60)) : '30');
     } else {
       setTeamKind('chain');
+      setSwarmReplicas({}); setSwarmLead(''); setSeedTasks(''); setSwarmMaxMin('30');
+      // A swarm NODE inside a DAG runs, but the form only edits a whole chain or a whole swarm: saving would
+      // rebuild one plain node per crew and drop it — say so instead of losing it silently.
+      if ((orch.nodes || []).some((n: any) => n && typeof n.swarm === 'object')) {
+        setMsg({ kind: 'err', text: 'This profile has a swarm inside a chain, which the form cannot edit yet — saving from here would drop the swarm node.' });
+      }
     }
     // variables / local_tools live on the crew node (authored profile-wide).
     const c0 = (def.crews || [])[0] || {};
