@@ -45,10 +45,20 @@ export default function TestPanel({ profileId, dirty }: { profileId?: string | n
           getAgentRunStatus(eid).catch(() => null),
           getAgentRunLogs(eid).catch(() => null),
         ]);
-        const status = String(st?.persistedStatus || st?.status || 'RUNNING').toUpperCase();
+        let status = String(st?.persistedStatus || st?.status || 'RUNNING').toUpperCase();
+        // The persisted row can stay PENDING when the job dies before the runner reports back (e.g. a
+        // profile it refuses). The RayJob status next to it is the truth: without this the panel
+        // showed "Running (pending)…" for 15 minutes on a run that had failed after 20 seconds.
+        const jobStatus = String(st?.rayJob?.jobStatus || '').toUpperCase();
+        let jobError: string | null = null;
+        if (!TERMINAL.includes(status) && (jobStatus === 'FAILED' || jobStatus === 'STOPPED')) {
+          status = 'FAILED';
+          const lines = String(st?.rayJob?.message || '').split('\n').map((l: string) => l.trim()).filter(Boolean);
+          jobError = lines.reverse().find((l: string) => /error|exception/i.test(l)) || lines[0] || 'the run failed';
+        }
         update(i, { status, steps: parseAgentTrace(lg?.logs) });
         if (TERMINAL.includes(status)) {
-          update(i, { answer: agentRunText(st?.result), error: st?.errorMessage || null });
+          update(i, { answer: agentRunText(st?.result), error: st?.errorMessage || jobError });
           break;
         }
       }
