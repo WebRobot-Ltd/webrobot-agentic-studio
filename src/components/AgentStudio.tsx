@@ -27,7 +27,7 @@ import {
   startAgentDesignerRun, extractAgentDefinition, AgentStudioError,
   getMcpIntegrations, mcpAuthHeader, saveMcpCredential, type McpIntegration,
   getAgentProfileDraft, deleteAgentProfileDraft,
-  getAgenticProfileVersions, type ProfileVersion,
+  getAgenticProfileVersions, type ProfileVersion, listAgenticProfiles,
 } from '../client';
 import {
   readStoredRun as leggiRun, storeRun as salvaRun, clearStoredRun as scartaRun,
@@ -496,6 +496,18 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
       .catch((e: any) => setMsg({ kind: 'err', text: e.message }));
   };
   useEffect(() => { if (editId) loadProfile(editId); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [editId]);
+
+  // "Open saved agent": the org's saved agents/teams, so one built earlier can be reopened and edited
+  // (11-17: a saved team could only be reached by knowing its URL).
+  const [savedList, setSavedList] = useState<{ id: string; name: string }[]>([]);
+  useEffect(() => {
+    listAgenticProfiles().then((r: any) => {
+      const rows: any[] = Array.isArray(r) ? r : (r?.profiles ?? r?.data ?? []);
+      setSavedList(rows.filter((x) => x?.id != null)
+        .map((x) => ({ id: String(x.id), name: String(x.display_name || x.name || `agent ${x.id}`) }))
+        .sort((a, b) => Number(b.id) - Number(a.id)));
+    }).catch(() => setSavedList([]));
+  }, [savedId]);
 
   // Variables + local_tools are authored profile-wide and attached to EACH crew node,
   // which is where the runner (build_options / crew_actor) reads them.
@@ -976,6 +988,14 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
         {isTeam && <span className="inline-flex items-center gap-1 rounded-full bg-brand-50 px-2 py-0.5 text-xs font-medium text-brand-700"><Users className="h-3 w-3" /> Team · {crews.length}</span>}
         {dirty && <span className="text-xs text-slate-500">unsaved changes</span>}
         <span className="flex-1" />
+        {savedList.length > 0 && (
+          <select aria-label="Open saved agent" value="" onChange={(e) => { if (e.target.value) loadProfile(e.target.value); }}
+            className="max-w-[220px] rounded-lg border border-slate-300 bg-white px-2 py-2 text-sm text-slate-700"
+            title="Reopen an agent or team saved earlier">
+            <option value="">Open saved agent…</option>
+            {savedList.map((p) => <option key={p.id} value={p.id}>{p.name} · #{p.id}</option>)}
+          </select>
+        )}
         <div className="relative">
           <button onClick={openVersions} disabled={savedId == null} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
             title={savedId == null ? 'Save the agent to start its history' : 'Earlier versions of this agent'}>

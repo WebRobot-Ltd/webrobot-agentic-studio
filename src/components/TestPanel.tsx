@@ -137,7 +137,17 @@ export default function TestPanel({ profileId, dirty }: { profileId?: string | n
               </p>
             )}
             {t.answer && (
-              <div className="max-w-[95%] whitespace-pre-wrap rounded-2xl rounded-bl-sm border border-slate-200 bg-white px-3 py-2 text-sm leading-relaxed text-slate-900">{t.answer}</div>
+              <div className="max-w-[95%] space-y-2">
+                {t.answer.split('\n\n---\n\n').map((part, k) => {
+                  const m = part.match(/^### (.+)\n\n([\s\S]*)$/);
+                  return (
+                    <div key={k} className="whitespace-pre-wrap rounded-2xl rounded-bl-sm border border-slate-200 bg-white px-3 py-2 text-sm leading-relaxed text-slate-900">
+                      {m && <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-brand-700">{m[1]}</div>}
+                      {m ? m[2] : part}
+                    </div>
+                  );
+                })}
+              </div>
             )}
             {t.error && (
               <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-900">{t.error}</p>

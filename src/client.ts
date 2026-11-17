@@ -191,7 +191,24 @@ export function parseAgentTrace(logs: string | null | undefined): TraceStep[] {
 }
 
 /** The answer text of a finished run (first non-empty string in the result). */
-export function agentRunText(result: any): string | null { return resultToText(result); }
+export function agentRunText(result: any): string | null {
+  // A TEAM run returns one entry per node ({<node>:{<crew>:"<text>"}}): show every agent's answer,
+  // labelled, in DAG order — before, only the entry agent's text appeared (11-17: the triage agent
+  // said "I'll pass it on" and the specialists' answers, e.g. the price from Knowledge, were hidden).
+  let r: any = result;
+  if (typeof r === 'string') { const s = r.trim(); if (s.startsWith('{')) { try { r = JSON.parse(s); } catch { /* plain text */ } } }
+  if (r && typeof r === 'object' && !Array.isArray(r) && !Array.isArray(r.crews)) {
+    const parts: string[] = [];
+    for (const [node, val] of Object.entries(r as Record<string, any>)) {
+      let t: string | null = null;
+      if (typeof val === 'string') t = val.trim();
+      else if (val && typeof val === 'object') t = (Object.values(val).find((v) => typeof v === 'string' && (v as string).trim()) as string | undefined)?.trim() ?? null;
+      if (t) parts.push(`### ${node}\n\n${t}`);
+    }
+    if (parts.length > 1) return parts.join('\n\n---\n\n');
+  }
+  return resultToText(result);
+}
 
 export const getAgentRunStatus = (executionId: string) =>
   call<any>('GET', `/api/agentic/${encodeURIComponent(executionId)}`);
