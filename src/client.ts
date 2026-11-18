@@ -347,3 +347,26 @@ export const getAgentProfileDraft = async (context = 'agentic:agent-studio'): Pr
 };
 export const deleteAgentProfileDraft = (context = 'agentic:agent-studio') =>
   call<any>('DELETE', `/api/agentic/profile-draft?context=${encodeURIComponent(context)}`);
+
+// ---- BACKGROUND runs and schedules (surface background / both) ----
+
+/** Start the profile as a background run (a Ray job), with an optional task as its goal. */
+export const startBackgroundRun = (profileId: string | number, goal?: string) =>
+  call<AgentRun>('POST', '/api/agentic/start', { profileId: Number(profileId), ...(goal && goal.trim() ? { inputs: { goal: goal.trim() } } : {}) });
+
+/** The org's recent runs (Jersey already scopes them to the caller's org). */
+export async function listProfileRuns(profileId: string | number, limit = 100): Promise<any[]> {
+  const r = await call<any>('GET', `/api/agentic/executions?limit=${limit}`);
+  const rows: any[] = Array.isArray(r) ? r : (r?.executions ?? r?.data ?? []);
+  return rows.filter((x) => String(x?.profileId ?? x?.profile_id ?? '') === String(profileId));
+}
+
+/** Schedule name for a profile: one schedule per agent. */
+export const scheduleNameFor = (profileId: string | number) => `agent-${profileId}`;
+
+/** Create / replace (enabled) or remove (enabled=false) the agent's cron schedule. */
+export const saveAgentSchedule = (profileId: string | number, cronExpr: string, enabled: boolean, goal?: string) =>
+  call<any>('POST', '/api/agentic/schedule', {
+    name: scheduleNameFor(profileId), cronExpr: cronExpr || '0 8 * * *', enabled,
+    startRequestJson: JSON.stringify({ profileId: Number(profileId), ...(goal && goal.trim() ? { inputs: { goal: goal.trim() } } : {}) }),
+  });

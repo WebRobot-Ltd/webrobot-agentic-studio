@@ -17,8 +17,9 @@
 //   · `editId` is a prop (was read from Next's useSearchParams).
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Bot, Plus, Trash2, Loader2, Save, Send, Users, Variable, Wrench, Tag, Sparkles, MessageSquare, Info, Network, LineChart, Code2, History } from 'lucide-react';
+import { Bot, Plus, Trash2, Loader2, Save, Send, Users, Variable, Wrench, Tag, Sparkles, MessageSquare, Info, Network, LineChart, Code2, History, Clock } from 'lucide-react';
 import TestPanel from './TestPanel';
+import BackgroundPanel from './BackgroundPanel';
 import { ReactFlow, Background, Controls, type Node, type Edge as FlowEdge } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import {
@@ -43,6 +44,7 @@ const SECTIONS = [
   { key: 'agents', label: 'Agents', hint: 'Instructions, model, tools', icon: Bot },
   { key: 'team', label: 'Team', hint: 'Chain of hand-offs or swarm', icon: Network },
   { key: 'overview', label: 'Overview', hint: 'Name, surface, description', icon: Info },
+  { key: 'background', label: 'Background', hint: 'Run now, schedule, past runs', icon: Clock },
   { key: 'tools', label: 'Local tools', hint: 'Inline Python tools', icon: Wrench },
   { key: 'variables', label: 'Variables', hint: 'Knobs buyers configure', icon: Variable },
   { key: 'marketplace', label: 'Marketplace', hint: 'Price, licence, publishing', icon: Tag },
@@ -503,9 +505,21 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
   useEffect(() => {
     listAgenticProfiles().then((r: any) => {
       const rows: any[] = Array.isArray(r) ? r : (r?.profiles ?? r?.data ?? []);
+      // the readable name lives in the spec (profile.display_name); `name` is the kebab-case code
+      const nameOf = (x: any) => {
+        try {
+          let sp: any = x.spec;
+          for (let i = 0; i < 2 && typeof sp === 'string'; i++) sp = JSON.parse(sp);   // the list may double-encode it
+          const d = sp?.profile?.display_name || sp?.display_name;
+          if (d && typeof d === 'string') return d;
+        } catch { /* fall back to the code */ }
+        const code = String(x.display_name || x.name || `agent ${x.id}`);
+        const t = code.replace(/[-_]+/g, ' ').trim();
+        return t.charAt(0).toUpperCase() + t.slice(1);
+      };
       setSavedList(rows.filter((x) => x?.id != null)
-        .map((x) => ({ id: String(x.id), name: String(x.display_name || x.name || `agent ${x.id}`) }))
-        .sort((a, b) => Number(b.id) - Number(a.id)));
+        .map((x) => ({ id: String(x.id), name: nameOf(x) }))
+        .sort((a, b) => Number(b.id) - Number(a.id)).slice(0, 100));
     }).catch(() => setSavedList([]));
   }, [savedId]);
 
@@ -1053,7 +1067,7 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
 
       <div className={`grid gap-4 ${testOpen ? 'lg:grid-cols-[210px_minmax(0,1fr)_400px]' : 'lg:grid-cols-[210px_minmax(0,1fr)]'}`}>
         <nav className="space-y-1 lg:sticky lg:top-20 lg:self-start">
-          {SECTIONS.map((x) => (
+          {SECTIONS.filter((x) => x.key !== 'background' || surface !== 'chat').map((x) => (
             <button key={x.key} type="button" onClick={() => setSection(x.key)}
               className={`flex w-full items-start gap-2.5 rounded-lg px-3 py-2 text-left transition ${section === x.key ? 'bg-brand-50 text-brand-900 ring-1 ring-brand-200' : 'text-slate-700 hover:bg-slate-100'}`}>
               <x.icon className={`mt-0.5 h-4 w-4 shrink-0 ${section === x.key ? 'text-brand-600' : 'text-slate-400'}`} />
@@ -1477,6 +1491,13 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
               <p className="text-xs text-slate-500 mt-1">Price is stored in cents (€{Number(priceEur || '0').toFixed(2)} → {Math.round(Number(priceEur || '0') * 100)} cents). Free + referenceable when €0.</p>
             </section>
 
+          </>)}
+          {section === 'background' && (<>
+            <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+              <h3 className="text-sm font-semibold text-slate-900">Background runs</h3>
+              <p className="mt-1 mb-4 text-xs text-slate-500">The agent works on its own: start it now, or on a schedule. Each run is a Ray job; results stay below.</p>
+              <BackgroundPanel profileId={savedId != null ? String(savedId) : null} dirty={dirty} />
+            </section>
           </>)}
           {section === 'definition' && (<>
             {/* spec preview + actions */}
