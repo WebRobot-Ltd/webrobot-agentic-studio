@@ -834,9 +834,14 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
     const k = `${i}:${integ.provider}`;
     const key = (intgKey[k] || '').trim();
     if (!key) return;
+    const endpoint = integ.endpointLabel ? (intgKey[`${k}:endpoint`] || '').trim() : integ.endpoint;
+    if (integ.endpointLabel && !/^https:\/\//.test(endpoint || '')) {
+      setIntgMsg((m) => ({ ...m, [k]: `${integ.endpointLabel}: an https:// URL is required` }));
+      return;
+    }
     setIntgMsg((m) => ({ ...m, [k]: 'saving…' }));
     try {
-      await saveMcpCredential(integ.provider, key, { endpoint: integ.endpoint });
+      await saveMcpCredential(integ.provider, key, { endpoint });
       setIntgMsg((m) => ({ ...m, [k]: 'saved ✓ — stored securely for your organization' }));
       setIntgKey((m) => ({ ...m, [k]: '' }));
     } catch (e) {
@@ -1183,6 +1188,10 @@ function AgentStudioInner({ chatSlot, editId = null, onSaved, onDeployed }: Agen
                                   </div>
                                   {ig && (
                                     <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                                      {ig.endpointLabel && (
+                                        <input className={inp + ' h-8 py-1 flex-1 min-w-[260px]'} placeholder={ig.endpointLabel}
+                                          value={intgKey[`${key}:endpoint`] || ''} onChange={(e) => setIntgKey((mm) => ({ ...mm, [`${key}:endpoint`]: e.target.value }))} />
+                                      )}
                                       <span className="text-xs text-slate-600">🔑 {ig.label} API key</span>
                                       <input type="password" className={inp + ' h-8 py-1 max-w-[220px]'} placeholder={`${ig.provider} API key`}
                                         value={intgKey[key] || ''} onChange={(e) => setIntgKey((mm) => ({ ...mm, [key]: e.target.value }))} />

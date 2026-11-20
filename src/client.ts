@@ -299,6 +299,9 @@ export interface McpIntegration {
   mcpUrl: string;        // url del server MCP a cui l'agente si connette
   apiKeyEnv: string;     // nome env che il runner-token popola (es. POSTIZ_API_KEY) — usato nell'header
   endpoint?: string;     // base url del servizio, salvato sulla cloud_credential
+  /** Quando c'e', l'endpoint lo inserisce l'utente (es. l'URL MCP del SUO negozio) e si salva sulla
+   *  cloud_credential; mcpUrl allora riferisce l'env (es. '${COMMERCE_MCP_BASE_URL}'), risolto a run time. */
+  endpointLabel?: string;
   authScheme?: 'bearer' | 'x-api-key';   // come portare la chiave nell'header (default bearer)
   note?: string;
 }
