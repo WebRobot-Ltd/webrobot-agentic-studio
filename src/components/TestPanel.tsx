@@ -78,7 +78,7 @@ export default function TestPanel({ profileId, dirty }: { profileId?: string | n
     } finally {
       setBusy(false);
     }
-  }, [text, profileId, busy, turns.length]);
+  }, [text, profileId, busy, turns]);
 
   return (
     <aside className="flex h-full min-h-[520px] flex-col rounded-xl border border-slate-200 bg-white shadow-sm">
