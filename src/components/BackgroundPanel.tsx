@@ -4,8 +4,10 @@
 // tenant had no way to run or schedule a background agent from the console — only the test panel.
 import { useCallback, useEffect, useState } from 'react';
 import {
-  startBackgroundRun, listProfileRuns, saveAgentSchedule, getAgentRunStatus, agentRunText,
+  startBackgroundRun, listProfileRuns, saveAgentSchedule, getAgentRunStatus, agentRunText, getAgentRunLogs, parseAgentTrace,
+  type TraceStep,
 } from '../client';
+import { TraceSteps } from './TestPanel';
 
 const PRESETS: { label: string; cron: string }[] = [
   { label: 'Every hour', cron: '0 * * * *' },
@@ -21,7 +23,7 @@ export default function BackgroundPanel({ profileId, dirty }: { profileId: strin
   const [cron, setCron] = useState(PRESETS[1].cron);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const [runs, setRuns] = useState<any[]>([]);
-  const [live, setLive] = useState<{ id: string; status: string; answer?: string | null; error?: string | null } | null>(null);
+  const [live, setLive] = useState<{ id: string; status: string; answer?: string | null; error?: string | null; steps?: TraceStep[] } | null>(null);
   const [open, setOpen] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -35,9 +37,10 @@ export default function BackgroundPanel({ profileId, dirty }: { profileId: strin
     if (!live || TERMINAL.includes(live.status)) return;
     const h = setInterval(async () => {
       try {
-        const st = await getAgentRunStatus(live.id);
+        const [st, lg] = await Promise.all([getAgentRunStatus(live.id), getAgentRunLogs(live.id).catch(() => null)]);
         const s = statusOf(st);
-        setLive({ id: live.id, status: s, answer: agentRunText(st?.result), error: st?.errorMessage || null });
+        setLive({ id: live.id, status: s, answer: agentRunText(st?.result), error: st?.errorMessage || null,
+                  steps: lg ? parseAgentTrace(lg.logs) : live.steps });
         if (TERMINAL.includes(s)) refresh();
       } catch { /* next tick */ }
     }, 5000);
@@ -92,6 +95,7 @@ export default function BackgroundPanel({ profileId, dirty }: { profileId: strin
       {live && (
         <div className="rounded-lg border border-slate-200 p-3">
           <p className="text-xs text-slate-500">Run <span className="font-mono">{live.id}</span> · <span className="font-semibold text-slate-800">{live.status}</span></p>
+          {live.steps && live.steps.length > 0 && <div className="mt-2 max-h-96 overflow-auto"><TraceSteps steps={live.steps} /></div>}
           {live.answer && <div className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap text-sm text-slate-900">{live.answer}</div>}
           {live.error && <p className="mt-2 text-sm text-rose-700">{live.error}</p>}
         </div>

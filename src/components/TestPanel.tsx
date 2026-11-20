@@ -114,34 +114,7 @@ export default function TestPanel({ profileId, dirty }: { profileId?: string | n
         {turns.map((t, i) => (
           <div key={i} className="space-y-2">
             <div className="ml-auto max-w-[90%] rounded-2xl rounded-br-sm bg-brand-600 px-3 py-2 text-sm text-white">{t.message}</div>
-            {t.steps.length > 0 && (
-              <ol className="space-y-1 rounded-lg border border-slate-200 bg-slate-50 p-2">
-                {t.steps.map((s, k) => (
-                  <li key={k} className="text-xs leading-snug">
-                    {s.kind === 'call' && (
-                      <span className="flex items-start gap-1.5 text-slate-800">
-                        <Wrench className="mt-0.5 h-3.5 w-3.5 shrink-0 text-brand-600" />
-                        <span><b className="font-semibold">{s.label}</b>{s.node && <span className="text-slate-400"> · {s.node}</span>}
-                          <details className="inline"><summary className="ml-1 inline cursor-pointer text-slate-400">args</summary>
-                            <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-white p-1.5 text-[11px] text-slate-600">{s.detail}</pre></details></span>
-                      </span>
-                    )}
-                    {s.kind === 'result' && (
-                      <span className={`flex items-start gap-1.5 ${s.label === 'error' ? 'text-rose-700' : 'text-slate-600'}`}>
-                        {s.label === 'error' ? <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> : <CornerDownRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" />}
-                        <span className="line-clamp-2 break-all">{s.detail}</span>
-                      </span>
-                    )}
-                    {s.kind === 'text' && (
-                      <span className="flex items-start gap-1.5 text-slate-700">
-                        <MessageSquare className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" />
-                        <span className="line-clamp-3">{s.detail}</span>
-                      </span>
-                    )}
-                  </li>
-                ))}
-              </ol>
-            )}
+            <TraceSteps steps={t.steps} />
             {!TERMINAL.includes(t.status) && t.status !== 'FAILED' && (
               <p className="flex items-center gap-2 text-sm text-slate-600">
                 <Loader2 className="h-4 w-4 animate-spin" /> {t.status === 'STARTING' ? 'Starting the run…' : `Running (${t.status.toLowerCase()})…`}
@@ -190,5 +163,39 @@ export default function TestPanel({ profileId, dirty }: { profileId?: string | n
         <p className="mt-1.5 text-[11px] text-slate-400">Each test is a real run: it uses tools and is billed like any run.</p>
       </div>
     </aside>
+  );
+}
+
+/** The steps of a run as they arrive (tool calls, their results, what the agent says) — shared by the
+ *  test chat and the Background panel, so a background run is followed live too (user 11-20). */
+export function TraceSteps({ steps }: { steps: TraceStep[] }) {
+  if (!steps.length) return null;
+  return (
+              <ol className="space-y-1 rounded-lg border border-slate-200 bg-slate-50 p-2">
+                {steps.map((s, k) => (
+                  <li key={k} className="text-xs leading-snug">
+                    {s.kind === 'call' && (
+                      <span className="flex items-start gap-1.5 text-slate-800">
+                        <Wrench className="mt-0.5 h-3.5 w-3.5 shrink-0 text-brand-600" />
+                        <span><b className="font-semibold">{s.label}</b>{s.node && <span className="text-slate-400"> · {s.node}</span>}
+                          <details className="inline"><summary className="ml-1 inline cursor-pointer text-slate-400">args</summary>
+                            <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded bg-white p-1.5 text-[11px] text-slate-600">{s.detail}</pre></details></span>
+                      </span>
+                    )}
+                    {s.kind === 'result' && (
+                      <span className={`flex items-start gap-1.5 ${s.label === 'error' ? 'text-rose-700' : 'text-slate-600'}`}>
+                        {s.label === 'error' ? <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> : <CornerDownRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" />}
+                        <span className="line-clamp-2 break-all">{s.detail}</span>
+                      </span>
+                    )}
+                    {s.kind === 'text' && (
+                      <span className="flex items-start gap-1.5 text-slate-700">
+                        <MessageSquare className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" />
+                        <span className="line-clamp-3">{s.detail}</span>
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ol>
   );
 }
