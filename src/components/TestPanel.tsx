@@ -33,8 +33,19 @@ export default function TestPanel({ profileId, dirty }: { profileId?: string | n
     setText(''); setBusy(true);
     const i = turns.length;
     setTurns((ts) => [...ts, { message, status: 'STARTING', steps: [] }]);
+    // Each run starts fresh: the earlier turns of THIS session travel with the new message, so "yes,
+    // apply them" reaches the agent together with the proposal it answers (11-20: without this the
+    // agent saw a bare "yes" and, rightly, refused to act). "New session" clears them.
+    const history = turns
+      .filter((t) => t.answer || t.error)
+      .slice(-6)
+      .map((t) => `User: ${t.message}\nAgent: ${String(t.answer || `(failed: ${t.error})`).slice(0, 6000)}`)
+      .join('\n\n');
+    const goal = history
+      ? `Conversation so far in this chat:\n\n${history}\n\nNew message from the user: ${message}`
+      : message;
     try {
-      const run = await startAgentTestRun(profileId, message);
+      const run = await startAgentTestRun(profileId, goal);
       const eid = run?.executionId;
       if (!eid) throw new Error('the run did not start');
       update(i, { executionId: eid, status: 'PENDING' });
